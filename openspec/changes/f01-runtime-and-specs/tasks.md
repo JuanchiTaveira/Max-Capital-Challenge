@@ -10,8 +10,8 @@
 - [x] 3.1 Fijar imágenes por digest y ejecutar Compose con init idempotente y dos instancias.
 
 ## 4. Verificación
-- [ ] 4.1 Ejecutar RuntimeInfrastructureIT con PostgreSQL, Kafka y transacciones reales.
-- [ ] 4.2 Ejecutar smoke de dos instancias, caídas, recuperación y persistencia.
+- [x] 4.1 Ejecutar RuntimeInfrastructureIT con PostgreSQL, Kafka y transacciones reales.
+- [x] 4.2 Ejecutar smoke de dos instancias, caídas, recuperación y persistencia.
 
 ## 5. Entrega
 - [ ] 5.1 Completar evidencia, documentación, estado README y archivo validado del change.
