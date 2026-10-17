@@ -7,7 +7,7 @@
 - [x] 2.2 Configurar Spotless y comprobar rechazo, corrección e idempotencia del formato.
 
 ## 3. Infraestructura
-- [ ] 3.1 Fijar imágenes por digest y ejecutar Compose con init idempotente y dos instancias.
+- [x] 3.1 Fijar imágenes por digest y ejecutar Compose con init idempotente y dos instancias.
 
 ## 4. Verificación
 - [ ] 4.1 Ejecutar RuntimeInfrastructureIT con PostgreSQL, Kafka y transacciones reales.

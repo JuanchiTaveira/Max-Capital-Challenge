@@ -1,0 +1,10 @@
+.git
+.agents
+.cache
+.env*
+target
+openspec
+scripts
+*.md
+.idea
+.vscode
