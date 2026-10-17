@@ -3,7 +3,7 @@
 - [x] 1.2 Crear guía del agente, documentación inicial y requisitos R01-R10.
 
 ## 2. Aplicación y formato
-- [ ] 2.1 Crear Maven Wrapper y aplicación Java 25 con salud, identidad y esquema app.
+- [x] 2.1 Crear Maven Wrapper y aplicación Java 25 con salud, identidad y esquema app.
 - [ ] 2.2 Configurar Spotless y comprobar rechazo, corrección e idempotencia del formato.
 
 ## 3. Infraestructura
