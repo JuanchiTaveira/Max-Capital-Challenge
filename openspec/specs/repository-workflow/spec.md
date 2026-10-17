@@ -1,4 +1,10 @@
-## ADDED Requirements
+# repository-workflow Specification
+
+## Purpose
+Mantener instrucciones de trabajo, decisiones y progreso verificable por feature,
+con trazabilidad entre requisitos, implementación, pruebas e historial Git.
+
+## Requirements
 
 ### Requirement: Feature traceability
 El repositorio SHALL conservar instrucciones operativas en AGENTS.md, decisiones

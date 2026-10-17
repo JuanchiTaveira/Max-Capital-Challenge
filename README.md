@@ -10,7 +10,7 @@ Esta tabla es la única fuente del estado de implementación.
 
 | ID | Feature | Estado |
 | --- | --- | --- |
-| F-01 | Entorno, OpenSpec, AGENTS.md y Spotless | Pendiente |
+| F-01 | Entorno, OpenSpec, AGENTS.md y Spotless | Implementado |
 | F-02 | Procesamiento y consulta de órdenes | Pendiente |
 | F-03 | Idempotencia y resultados persistidos | Pendiente |
 | F-04 | Settlement transaccional | Pendiente |
@@ -116,6 +116,11 @@ código 0; se puede repetir sin recrear topics existentes.
 [DECISIONS.md](DECISIONS.md) justifica el diseño, sus supuestos y los límites de las garantías.
 El change OpenSpec de cada feature conserva requisitos, diseño, tareas y evidencia.
 Para validar: `openspec validate --all --strict`.
+
+[Evidencia de F-01](openspec/changes/archive/2026-10-17-f01-runtime-and-specs/verification.md):
+tres pruebas de integración, smoke completo de dos instancias, recuperación de
+dependencias, persistencia y build desde un clon limpio. Las tres specs están
+sincronizadas y el change está archivado.
 
 Kafka usa un solo broker: el entorno verifica caídas de aplicaciones y reinicios,
 no supervivencia a pérdida física del volumen. La presencia de transacciones Kafka

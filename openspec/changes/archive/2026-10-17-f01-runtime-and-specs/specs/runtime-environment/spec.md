@@ -1,3 +1,8 @@
+## Purpose
+
+Proveer un entorno reproducible con dos instancias, infraestructura persistente y
+verificaciones observables de salud, conectividad y transacciones del broker.
+
 ## ADDED Requirements
 
 ### Requirement: Reproducible runtime

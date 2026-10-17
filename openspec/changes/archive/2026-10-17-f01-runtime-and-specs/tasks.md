@@ -14,4 +14,4 @@
 - [x] 4.2 Ejecutar smoke de dos instancias, caídas, recuperación y persistencia.
 
 ## 5. Entrega
-- [ ] 5.1 Completar evidencia, documentación, estado README y archivo validado del change.
+- [x] 5.1 Completar evidencia y documentación; verificar criterios para archivar y actualizar README.

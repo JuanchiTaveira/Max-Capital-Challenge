@@ -1,4 +1,10 @@
-## ADDED Requirements
+# code-formatting Specification
+
+## Purpose
+Conservar un formato Java determinista en producción y pruebas, con corrección
+explícita y validación obligatoria antes de las etapas posteriores del build.
+
+## Requirements
 
 ### Requirement: Deterministic Java formatting
 Spotless SHALL formatear fuentes Java de producción y pruebas con Google Style,
