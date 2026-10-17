@@ -36,7 +36,7 @@ Para el smoke automatizado: PowerShell 7 (`pwsh`). OpenSpec 1.14.1 requiere Node
 | Kafka | 4.2.1 |
 | PostgreSQL | 17, imagen bookworm fijada por digest |
 | JUnit Jupiter / Testcontainers | 6.0.3 / 2.0.5, BOM de Spring Boot |
-| Spotless / google-java-format | 3.10.4 / 1.37.0 |
+| Spotless / google-java-format | 3.10.4 / 1.36.1 |
 | OpenSpec | 1.14.1 |
 
 ## Ejecutar

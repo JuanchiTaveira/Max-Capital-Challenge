@@ -15,7 +15,8 @@ El dominio de órdenes y las garantías de entrega pertenecen a features posteri
 - Un módulo `com.maxcapital.challenge:max-capital-challenge:0.1.0-SNAPSHOT`.
 - Java 25, Spring Boot 4.1.1 y Maven Wrapper 3.9.11; dependencias con BOM.
 - JUnit Jupiter 6.0.3 y Testcontainers 2.0.5. Failsafe ejecuta `*IT` en verify.
-- Spotless 3.10.4 con google-java-format 1.37.0 GOOGLE en validate.
+- Spotless 3.10.4 con google-java-format 1.36.1 GOOGLE en validate. La versión
+  1.37.0 del plan cambia Style.valueOf y es incompatible con el adaptador de Spotless.
 - Imágenes oficiales por tag y digest; Kafka 4.2.1, PostgreSQL 17 y Temurin 25.
 - KRaft de un broker, dos particiones y retención sin expiración en tres topics.
 - PostgreSQL y Kafka con volúmenes nombrados. Init de topics idempotente.

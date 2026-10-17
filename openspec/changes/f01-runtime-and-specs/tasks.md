@@ -4,7 +4,7 @@
 
 ## 2. Aplicación y formato
 - [x] 2.1 Crear Maven Wrapper y aplicación Java 25 con salud, identidad y esquema app.
-- [ ] 2.2 Configurar Spotless y comprobar rechazo, corrección e idempotencia del formato.
+- [x] 2.2 Configurar Spotless y comprobar rechazo, corrección e idempotencia del formato.
 
 ## 3. Infraestructura
 - [ ] 3.1 Fijar imágenes por digest y ejecutar Compose con init idempotente y dos instancias.
