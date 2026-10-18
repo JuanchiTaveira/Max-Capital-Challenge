@@ -35,18 +35,23 @@ estable en reentregas y único dentro de la orden; el enunciado no lo garantiza
 expresamente. `secondaryTradeId` y `operationNumber` identifican ejecuciones, pero no se
 asume que identifiquen todos los reportes de estado, incluidos NEW y CANCELLED.
 
-Se prevé una restricción única y comparación de contenido antes de validar la transición
-terminal. La deduplicación persistente todavía no está implementada; si el origen no
-cumple el supuesto de identidad, será necesario acordar otra clave antes de atribuir
-esta garantía.
+Una restricción única sobre esa pareja protege el ledger. Bajo el lock de la orden se
+compara el JSONB completo: contenido equivalente es un no-op; la misma identidad con
+contenido distinto es un error. El duplicado se comprueba antes de validar la
+transición, por lo que reenviar un terminal idéntico no incrementa el contador ni agrega
+ledger.
 
 ## 4. Persistencia y atomicidad
 
-Se elige PostgreSQL compartido por sus transacciones, restricciones y locks. Se prevé
-escribir estado, contador y ledger en una transacción por ER, serializando
-modificaciones de una orden mediante un lock de fila. JDBC hará explícito el SQL y
-Flyway versionará el esquema. Las tablas y esta atomicidad de negocio todavía están
-pendientes.
+Se usa PostgreSQL compartido porque las transacciones, restricciones y locks permiten
+mantener orden y ledger consistentes entre ambas instancias. JDBC deja explícito el SQL
+y Flyway versiona el esquema. Esto agrega una dependencia común y una escritura
+transaccional por ER.
+
+En una transacción SQL se inicializa la orden si falta, se bloquea su fila con `SELECT
+FOR UPDATE`, se deduplica, se calcula el nuevo estado y se escriben estado, contador y
+ledger. Si cualquier paso falla, todo se revierte. La base y Kafka conservan
+transacciones independientes.
 
 ## 5. Estado mutable y ledger
 
@@ -55,8 +60,10 @@ inicial, cantidades compatibles y acumulado no decreciente; rechaza nuevos repor
 sobre FILLED o CANCELLED. Los acumulados son snapshots: se validan y adoptan, sin
 sumarlos al acumulado previo. El contador se incrementa desde su valor anterior.
 
-Se prevé conservar el ER completo en un ledger con clave autoincremental y una entrada
-por reporte efectivamente aplicado. Su persistencia todavía está pendiente.
+El ledger conserva el ER completo en JSONB, incluidos campos adicionales, con una
+identidad global autoincremental por inserción. Puede haber huecos por rollback: la
+clave ordena el ledger de cada orden y no representa un orden global de commits entre
+órdenes distintas.
 
 La consulta conjunta de estado y ledger, ordenado por su clave de inserción, todavía
 está pendiente.

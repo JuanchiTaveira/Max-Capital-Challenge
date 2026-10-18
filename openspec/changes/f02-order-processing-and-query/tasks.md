@@ -5,12 +5,12 @@
 - [x] 1.1 Implementar el modelo y parser JSON/key para `fixId`, `numericOrderId`, status, `nominalAmounts`, `leavesNominalAmount`, `accumulativeNominalAmount` y `transactionTime`, conservando los demás campos; verificar con pruebas de ejemplo del enunciado, faltantes, key distinta, tiempo local y cantidades fuera de contrato.
 - [x] 1.2 Implementar las transiciones puras de la orden con snapshots de acumulado y restante; verificar con pruebas de `NEW`, parciales sucesivos, `FILLED`, `CANCELLED`, total inconsistente y duplicado terminal evaluado antes de la transición.
 - [x] 1.3 Documentar en README el contrato JSON/key y las reglas de transición sin cambiar F-02 de Pendiente; agregar en AGENTS.md y README.md el enlace a `challenge-arch-max-capital..pdf` en la raíz; verificar enlaces y ejemplos con el parser y registrar en DECISIONS los supuestos sobre `fixId`, cancelación y contador.
-- [ ] 1.4 Aplicar Spotless y crear un commit Conventional Commit del dominio; verificar `.\mvnw.cmd spotless:check` y las pruebas unitarias.
+- [x] 1.4 Aplicar Spotless y crear un commit Conventional Commit del dominio; verificar `.\mvnw.cmd spotless:check` y las pruebas unitarias.
 
 ## 2. Estado y ledger SQL
 
-- [ ] 2.1 Agregar la migración Flyway aditiva de órdenes y ledger con ER completo en JSONB, restricciones e índices del diseño; verificar en PostgreSQL Testcontainers PK, FK, unicidad e identidad autoincremental.
-- [ ] 2.2 Implementar la transacción de aplicación y el adaptador JDBC para comparar `(numericOrderId, fixId)`, bloquear orden, aplicar transición y escribir ledger/contador juntos; verificar con integración SQL secuencia, snapshots, duplicado idéntico, conflicto de contenido y rollback ante error de escritura.
+- [x] 2.1 Agregar la migración Flyway aditiva de órdenes y ledger con ER completo en JSONB, restricciones e índices del diseño; verificar en PostgreSQL Testcontainers PK, FK, unicidad e identidad autoincremental.
+- [x] 2.2 Implementar la transacción de aplicación y el adaptador JDBC para comparar `(numericOrderId, fixId)`, bloquear orden, aplicar transición y escribir ledger/contador juntos; verificar con integración SQL secuencia, snapshots, duplicado idéntico, conflicto de contenido y rollback ante error de escritura.
 - [ ] 2.3 Crear un commit Conventional Commit del bloque SQL tras ejecutar las pruebas de integración y `.\mvnw.cmd spotless:check`.
 
 ## 3. Ingesta Kafka

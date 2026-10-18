@@ -1,8 +1,10 @@
 package com.maxcapital.challenge.application;
 
 import com.maxcapital.challenge.domain.ExecutionReport;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Service
 public class ProcessExecutionReport {
   private final OrderRepository repository;
 
@@ -10,7 +12,7 @@ public class ProcessExecutionReport {
     this.repository = repository;
   }
 
-  @Transactional
+  @Transactional("orderTransactionManager")
   public void process(ExecutionReport report, String payload) {
     repository.initialize(report);
     var previous = repository.lock(report.numericOrderId());
