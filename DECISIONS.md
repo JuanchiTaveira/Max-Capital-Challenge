@@ -71,8 +71,9 @@ identidad global autoincremental por inserción. Puede haber huecos por rollback
 clave ordena el ledger de cada orden y no representa un orden global de commits entre
 órdenes distintas.
 
-La consulta conjunta de estado y ledger, ordenado por su clave de inserción, todavía
-está pendiente.
+La consulta HTTP obtiene estado y ledger con un único SELECT y JOIN, bajo el mismo
+snapshot confirmado. Ordena por `ledgerId`, evitando combinar un estado nuevo con un
+ledger anterior. Se devuelve el ledger completo; el ejercicio no requiere paginación.
 
 ## 6. Recuperación y errores de procesamiento
 

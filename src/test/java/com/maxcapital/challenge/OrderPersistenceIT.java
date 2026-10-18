@@ -5,22 +5,36 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
+import com.maxcapital.challenge.adapter.out.kafka.KafkaHealthIndicator;
 import com.maxcapital.challenge.application.ProcessExecutionReport;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @Testcontainers
-@SpringBootTest(properties = "spring.kafka.listener.auto-startup=false")
+@SpringBootTest(
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = "spring.kafka.listener.auto-startup=false")
 class OrderPersistenceIT {
+  @MockitoBean KafkaHealthIndicator kafkaHealth;
+
+  @Value("${local.server.port}")
+  int port;
+
   @Container
   static final PostgreSQLContainer POSTGRES =
       new PostgreSQLContainer(TestInfrastructure.image("postgres", "postgres"));
@@ -35,6 +49,47 @@ class OrderPersistenceIT {
   @Autowired ProcessExecutionReport processor;
   @Autowired ExecutionReportParser parser;
   @Autowired JdbcTemplate jdbc;
+
+  @Test
+  void returnsCommittedStateAndOrderedLedgerTogetherAndHandlesInvalidOrAbsentOrders()
+      throws Exception {
+    apply(report(106, 1, "NEW", 0, 10));
+    apply(report(106, 2, "PARTIALLY_FILLED", 7, 3));
+    var filled = report(106, 3, "FILLED", 10, 0);
+    apply(filled);
+    apply(filled);
+    try (var client = HttpClient.newHttpClient()) {
+      var response =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/orders/106"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertThat(response.statusCode()).isEqualTo(200);
+      var body = new tools.jackson.databind.json.JsonMapper().readTree(response.body());
+      assertThat(body.path("status").asString()).isEqualTo("FILLED");
+      assertThat(body.path("appliedExecutionCount").asInt()).isEqualTo(3);
+      assertThat(body.path("accumulativeNominalAmount").decimalValue()).isEqualByComparingTo("10");
+      var ledger = body.path("ledger");
+      assertThat(ledger.size()).isEqualTo(3);
+      long previous = 0;
+      for (int i = 0; i < ledger.size(); i++) {
+        var entry = ledger.get(i);
+        assertThat(entry.path("ledgerId").asLong()).isGreaterThan(previous);
+        previous = entry.path("ledgerId").asLong();
+        assertThat(entry.path("report").path("fixId").asLong()).isEqualTo(i + 1);
+        assertThat(entry.path("report").path("ticker").asString()).isEqualTo("VSCPC");
+      }
+      for (var invalid : new String[] {"0", "-1", "abc", "9223372036854775808", "999999"}) {
+        var result =
+            client.send(
+                HttpRequest.newBuilder(
+                        URI.create("http://localhost:" + port + "/orders/" + invalid))
+                    .build(),
+                HttpResponse.BodyHandlers.discarding());
+        assertThat(result.statusCode()).isEqualTo(invalid.equals("999999") ? 404 : 400);
+      }
+    }
+  }
 
   @Test
   void appliesSnapshotsAndRecognizesTerminalReplayBeforeTransition() {

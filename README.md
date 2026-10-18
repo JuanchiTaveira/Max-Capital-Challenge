@@ -112,6 +112,42 @@ a fallar al reiniciar: F-06 incorporará cuarentena y recuperación ordenada.
 F-03/F-05 cubrirán resultados por offset y más fronteras de caída/rebalanceo.
 F-02 todavía no publica settlements.
 
+### Consultar una orden
+
+`GET /orders/{numericOrderId}` devuelve estado y ledger juntos desde la base
+compartida. HTTP 404 significa orden inexistente; 400, identificador inválido.
+Las dos instancias exponen la misma consulta:
+
+```sh
+curl http://localhost:8081/orders/13144742
+curl http://localhost:8082/orders/13144742
+```
+
+Ejemplo después de aplicar sólo el NEW (los `ledgerId` son globales y pueden
+tener huecos). `report` conserva todos los campos del ER recibido:
+
+```json
+{
+  "numericOrderId": 13144742,
+  "status": "NEW",
+  "appliedExecutionCount": 1,
+  "nominalAmounts": 10,
+  "accumulativeNominalAmount": 0,
+  "leavesNominalAmount": 10,
+  "ledger": [{
+    "ledgerId": 1,
+    "report": {
+      "fixId": 1, "numericOrderId": 13144742, "status": "NEW",
+      "nominalAmounts": 10, "accumulativeNominalAmount": 0,
+      "leavesNominalAmount": 10, "transactionTime": "2026-07-20T18:08:52.129"
+    }
+  }]
+}
+```
+
+La consulta SQL única lee estado y ledger desde el mismo snapshot confirmado;
+el array se ordena por `ledgerId`, no por `transactionTime`.
+
 ### Comandos de verificación
 
 En PowerShell:

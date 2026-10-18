@@ -17,11 +17,11 @@
 
 - [x] 3.1 Incorporar el listener secuencial por partición con key validada, `read_committed` y confirmación manual posterior al commit SQL; verificar con Kafka/PostgreSQL Testcontainers órdenes intercaladas, dos particiones, reentrega idéntica y transacción productora abortada.
 - [x] 3.2 Configurar la falla visible sin recuperación que salte registros; verificar con integración que un ER inválido y una falla SQL dejan el offset sin confirmar, no aplican el siguiente ER de la partición y permiten reprocesar al reiniciar.
-- [ ] 3.3 Documentar en README el diagnóstico y límite de recuperación de F-02, y crear un commit Conventional Commit tras `.\mvnw.cmd spotless:check` y las pruebas Kafka/SQL.
+- [x] 3.3 Documentar en README el diagnóstico y límite de recuperación de F-02, y crear un commit Conventional Commit tras `.\mvnw.cmd spotless:check` y las pruebas Kafka/SQL.
 
 ## 4. Consulta HTTP
 
-- [ ] 4.1 Implementar `GET /orders/{numericOrderId}` sobre SQL confirmado con estado y ledger en una respuesta, 200/400/404 y `ledgerId` ascendente; verificar con integración HTTP campos, orden, ausencia y que el duplicado no aparece dos veces.
+- [x] 4.1 Implementar `GET /orders/{numericOrderId}` sobre SQL confirmado con estado y ledger en una respuesta, 200/400/404 y `ledgerId` ascendente; verificar con integración HTTP campos, orden, ausencia y que el duplicado no aparece dos veces.
 - [ ] 4.2 Documentar la ruta, campos y respuesta de ejemplo en README; verificar el ejemplo contra las pruebas HTTP y crear un commit Conventional Commit tras `.\mvnw.cmd spotless:check`.
 
 ## 5. Verificación integral y cierre de F-02
