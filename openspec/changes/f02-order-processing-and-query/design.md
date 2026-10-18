@@ -82,17 +82,18 @@ convertir snapshots en deltas.
 
 ### Consumo y frontera de confirmación
 
-Las instancias comparten `group-id`; cada listener procesa su partición en serie,
-con concurrencia máxima dos para el topic de dos particiones. No se introducen
+Las instancias comparten `group-id`; cada una usa un consumidor que procesa sus
+particiones en serie (dos consumidores totales con ambas instancias). No se introducen
 tareas asíncronas por registro ni se cambia el número de particiones. Se valida
 la key contra el payload antes de tocar SQL. El consumidor mantiene
 `read_committed`, `enable-auto-commit=false` y confirma manualmente el offset tras
 retornar la transacción SQL. Auto-commit podría avanzar aunque falle la escritura.
 
-Una excepción detiene o pausa la partición afectada sin recoverer que salte el
+Una excepción detiene el contenedor de la instancia sin recoverer que salte el
 registro ni publicación a `execution-reports-rejected`. El diagnóstico incluye
 topic, partición, offset, key, identificador si es legible y causa, sin secretos.
-El registro y offset quedan pendientes. F-06 definirá la salida de ese estado.
+El registro y offset quedan pendientes. Si la instancia tiene ambas particiones,
+se detienen ambas. F-06 definirá la salida de ese estado.
 Una prueba con un ER inválido seguido de uno válido en la misma partición debe
 demostrar que el segundo no se aplica ni se adelanta el offset.
 
@@ -138,7 +139,8 @@ F-01 queda sin uso en F-02.
 Un adaptador HTTP expone `GET /orders/{numericOrderId}` según
 `order-query/spec.md`: estado y ledger juntos, con `ledger_id ASC`, desde la
 base compartida. Devuelve 404 para orden ausente y 400 para ID inválido. Sólo
-lee filas confirmadas. Se elige un endpoint para cumplir la consulta conjunta
+lee filas confirmadas con un único SELECT que reúne orden y ledger en el mismo
+snapshot MVCC, evitando lecturas parciales entre dos sentencias. Se elige un endpoint para cumplir la consulta conjunta
 pedida por el enunciado. No se agrega paginación en F-02; el tamaño de la demo
 es acotado y una futura paginación deberá preservar el orden definido.
 

@@ -20,6 +20,7 @@ spring:
       group-id: max-capital-orders-v1
       enable-auto-commit: false
       auto-offset-reset: earliest
+      max-poll-records: 1
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
       properties:

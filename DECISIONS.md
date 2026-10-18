@@ -18,14 +18,20 @@ una política de retención y capacidad.
 
 ## 2. Secuencia por orden y concurrencia
 
-La estrategia prevista es usar `numericOrderId` como key, dos particiones y un grupo
-compartido por las dos instancias, con consumo en serie por partición. Su implementación
-y prueba de ingesta todavía están pendientes.
+Todos los ER de una orden usan como key el `numericOrderId` en decimal canónico. Dos
+particiones y un mismo grupo reparten el flujo entre las dos instancias. Cada instancia
+tiene un consumidor y procesa sus registros secuencialmente, sin delegar ER de una
+partición a tareas paralelas.
 
-Esto requiere que el productor respete la secuencia de publicación y el particionado por
-key. No se usará `transactionTime` para ordenar ni se reparticionará con órdenes en
-curso. Se acepta que órdenes de una misma partición compartan espera y que sólo haya dos
-consumidores activos.
+Se asume que el productor publica los ER en secuencia y con particionado estable por
+key, como permite el enunciado. `transactionTime` se conserva como dato; no se usa para
+ordenar. No se aumenta el número de particiones con órdenes en curso, porque una key
+podría cambiar de partición.
+
+Se resigna paralelismo dentro de la partición: una orden lenta afecta a otras que la
+comparten. Con dos particiones hay hasta dos consumidores activos. El bloqueo SQL
+protege la actualización concurrente, pero la secuencia del flujo depende del
+particionado y del consumo en serie.
 
 ## 3. Identidad del ER e idempotencia
 
@@ -70,10 +76,24 @@ está pendiente.
 
 ## 6. Recuperación y errores de procesamiento
 
-Se prevé confirmar el offset después del commit SQL y tolerar la reentrega mediante
-deduplicación persistente. La ingesta y sus fronteras de falla aún están pendientes. Los
-errores deberán conservarse y señalarse; el diseño de reintentos, cuarentena y
-recuperación ordenada se completará con sus pruebas.
+El listener primero completa la transacción SQL y después confirma sincrónicamente el
+offset Kafka. Una falla antes del commit SQL revierte sus escrituras. Si SQL confirmó
+pero el offset no, la reentrega encuentra el ER ya aplicado y no vuelve a modificar la
+orden. No hay una transacción ACID distribuida entre ambos sistemas.
+
+Ante error se registra topic, partición, offset y key, y se detiene el contenedor
+consumidor de esa instancia sin confirmar el registro fallido. Si tenía ambas
+particiones, ambas se detienen. Para fallas transitorias se requiere resolver la causa y
+reiniciar el consumidor.
+
+Un mensaje inválido permanece en Kafka y vuelve a fallar al reiniciar; los ER
+posteriores de la partición esperan. Esta política evita descartar información, pero aún
+puede bloquear indefinidamente. F-06 debe distinguir errores, conservar pendientes por
+orden y dar una recuperación operativa. La orden consultada representa sólo el prefijo
+aplicado, sin indicador persistente de incompletitud.
+
+La recuperación completa ante caídas y rebalanceos sigue pendiente de F-05; los
+escenarios ya probados no bastan para afirmar todas sus fronteras de falla.
 
 ## 7. Settlement: garantía pendiente
 

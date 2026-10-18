@@ -90,6 +90,28 @@ CANCELLED termina con restante cero y acumulado no decreciente. Las cantidades
 son snapshots: no se suman al acumulado anterior. El contador incluye cada ER
 aplicado, también NEW y terminal. `transactionTime` no establece secuencia.
 
+### Procesamiento y errores de F-02
+
+Cada instancia usa un consumidor del grupo `max-capital-orders-v1`. Dos particiones
+permiten que ambas consuman órdenes distintas; cada partición se procesa en serie.
+El productor debe mantener la misma key para todos los ER de una orden y usar
+el particionado estándar por key. No cambiar las particiones con órdenes en curso.
+
+Estado, contador y ledger se escriben en una transacción SQL. La identidad es
+`(numericOrderId, fixId)`: un ER idéntico ya aplicado es un no-op, incluso después
+de FILLED/CANCELLED; la misma identidad con otro contenido es error. El offset se
+confirma después del commit SQL. Una reentrega entre esas confirmaciones no agrega
+otra fila ni incrementa el contador.
+
+Un error de JSON, key, transición, conflicto o SQL deja un diagnóstico `ER pendiente`
+con topic, partición, offset y key, y detiene el contenedor consumidor de esa
+instancia sin confirmar el ER fallido ni saltar al siguiente. Si esa instancia
+tenía ambas particiones, ambas se detienen. Tras resolver una falla transitoria,
+reiniciar la aplicación retoma desde el offset pendiente. Un ER inválido vuelve
+a fallar al reiniciar: F-06 incorporará cuarentena y recuperación ordenada.
+F-03/F-05 cubrirán resultados por offset y más fronteras de caída/rebalanceo.
+F-02 todavía no publica settlements.
+
 ### Comandos de verificación
 
 En PowerShell:

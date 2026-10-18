@@ -11,12 +11,12 @@
 
 - [x] 2.1 Agregar la migración Flyway aditiva de órdenes y ledger con ER completo en JSONB, restricciones e índices del diseño; verificar en PostgreSQL Testcontainers PK, FK, unicidad e identidad autoincremental.
 - [x] 2.2 Implementar la transacción de aplicación y el adaptador JDBC para comparar `(numericOrderId, fixId)`, bloquear orden, aplicar transición y escribir ledger/contador juntos; verificar con integración SQL secuencia, snapshots, duplicado idéntico, conflicto de contenido y rollback ante error de escritura.
-- [ ] 2.3 Crear un commit Conventional Commit del bloque SQL tras ejecutar las pruebas de integración y `.\mvnw.cmd spotless:check`.
+- [x] 2.3 Crear un commit Conventional Commit del bloque SQL tras ejecutar las pruebas de integración y `.\mvnw.cmd spotless:check`.
 
 ## 3. Ingesta Kafka
 
-- [ ] 3.1 Incorporar el listener secuencial por partición con key validada, `read_committed` y confirmación manual posterior al commit SQL; verificar con Kafka/PostgreSQL Testcontainers órdenes intercaladas, dos particiones, reentrega idéntica y transacción productora abortada.
-- [ ] 3.2 Configurar la falla visible sin recuperación que salte registros; verificar con integración que un ER inválido y una falla SQL dejan el offset sin confirmar, no aplican el siguiente ER de la partición y permiten reprocesar al reiniciar.
+- [x] 3.1 Incorporar el listener secuencial por partición con key validada, `read_committed` y confirmación manual posterior al commit SQL; verificar con Kafka/PostgreSQL Testcontainers órdenes intercaladas, dos particiones, reentrega idéntica y transacción productora abortada.
+- [x] 3.2 Configurar la falla visible sin recuperación que salte registros; verificar con integración que un ER inválido y una falla SQL dejan el offset sin confirmar, no aplican el siguiente ER de la partición y permiten reprocesar al reiniciar.
 - [ ] 3.3 Documentar en README el diagnóstico y límite de recuperación de F-02, y crear un commit Conventional Commit tras `.\mvnw.cmd spotless:check` y las pruebas Kafka/SQL.
 
 ## 4. Consulta HTTP
