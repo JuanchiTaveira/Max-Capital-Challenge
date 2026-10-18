@@ -22,11 +22,11 @@
 ## 4. Consulta HTTP
 
 - [x] 4.1 Implementar `GET /orders/{numericOrderId}` sobre SQL confirmado con estado y ledger en una respuesta, 200/400/404 y `ledgerId` ascendente; verificar con integración HTTP campos, orden, ausencia y que el duplicado no aparece dos veces.
-- [ ] 4.2 Documentar la ruta, campos y respuesta de ejemplo en README; verificar el ejemplo contra las pruebas HTTP y crear un commit Conventional Commit tras `.\mvnw.cmd spotless:check`.
+- [x] 4.2 Documentar la ruta, campos y respuesta de ejemplo en README; verificar el ejemplo contra las pruebas HTTP y crear un commit Conventional Commit tras `.\mvnw.cmd spotless:check`.
 
 ## 5. Verificación integral y cierre de F-02
 
-- [ ] 5.1 Agregar un smoke aislado de Compose con dos instancias que publique ER del formato del enunciado en ambas particiones, consulte 8081/8082 y compruebe secuencia, duplicado y datos tras reiniciar sin borrar volúmenes; verificar ejecutando el script y conservar su salida como evidencia.
+- [x] 5.1 Agregar un smoke aislado de Compose con dos instancias que publique ER del formato del enunciado en ambas particiones, consulte 8081/8082 y compruebe secuencia, duplicado y datos tras reiniciar sin borrar volúmenes; verificar ejecutando el script y conservar su salida como evidencia.
 - [ ] 5.2 Ejecutar `.\mvnw.cmd verify`, `.\mvnw.cmd spotless:check`, el smoke y `openspec validate --all --strict`; registrar resultados observados y limitaciones, marcar sólo entonces F-02 como Implementado en README y crear el commit Conventional Commit de cierre.
 
 ## Workflow follow-up

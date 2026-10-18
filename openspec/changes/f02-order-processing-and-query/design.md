@@ -116,16 +116,17 @@ adicional necesitará ampliar el ámbito de esa identidad. El contenido se compa
 como JSON semántico, sin depender del orden de campos; distinto contenido para
 la misma identidad es conflicto, no un no-op.
 
-El caso de uso abre una transacción SQL. Busca la identidad en el ledger y
-selecciona explícitamente `orderTransactionManager` (JDBC): el productor
+El caso de uso abre una transacción SQL seleccionando explícitamente
+`orderTransactionManager` (JDBC): el productor
 transaccional de F-01 también puede registrar un transaction manager Kafka,
-que no debe interceptar este caso de uso. El listener usará una factory sin
-transaction manager Kafka. El caso de uso
+que no debe interceptar este caso de uso. El listener usa una factory sin
+transaction manager Kafka. El caso de uso inserta una fila inicial si falta,
+bloquea la orden con `SELECT ... FOR UPDATE`, busca la identidad en el ledger y
 compara contenido antes de validar el estado terminal: una reentrega idéntica
-termina en no-op y una conflictiva falla. Para un ER nuevo, bloquea la fila de
-orden existente con `SELECT ... FOR UPDATE`, valida la transición, actualiza
+termina en no-op y una conflictiva falla. Para un ER nuevo valida la transición, actualiza
 estado y contador e inserta el ledger. La creación por `NEW` se protege con PK;
-si surgiera una carrera, se reevalúa bajo la misma transacción. La unicidad SQL
+si surge una carrera, `ON CONFLICT DO NOTHING` espera la inserción concurrente
+y la lectura bloqueante obtiene el estado confirmado. La unicidad SQL
 respalda la serialización Kafka. Una transacción corta evita que las consultas
 vean contador o estado desacoplados del ledger.
 

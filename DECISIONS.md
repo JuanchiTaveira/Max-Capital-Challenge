@@ -121,3 +121,11 @@ fuera alta disponibilidad del broker/base, recuperación por pérdida física de
 resets arbitrarios de offsets y recreación de topics. Una versión operativa necesitaría
 replicación, respaldos y procedimientos de recuperación compatibles con la identidad y
 la secuencia de los ER.
+
+La evidencia actual incluye [pruebas SQL y
+HTTP](src/test/java/com/maxcapital/challenge/OrderPersistenceIT.java) de rollback
+conjunto, concurrencia y duplicados terminales, y [pruebas
+Kafka](src/test/java/com/maxcapital/challenge/ExecutionReportKafkaIT.java) de órdenes
+intercaladas, reentrega y errores sin avance de offset. El [smoke de dos
+instancias](scripts/verify-f02.ps1) comprueba consulta y persistencia tras reinicio.
+Estas pruebas no demuestran settlement ni recuperación completa de mensajes permanentes.

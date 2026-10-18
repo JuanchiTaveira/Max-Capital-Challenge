@@ -3,8 +3,8 @@
 Servicio de procesamiento de ExecutionReports desarrollado por features con OpenSpec.
 El enunciado está en [challenge-arch-max-capital..pdf](challenge-arch-max-capital..pdf),
 en la raíz del repositorio.
-F-01 prepara infraestructura y herramientas; las garantías de negocio se incorporan
-desde F-02. Las dos instancias de F-01 están conectadas, todavía sin consumir ER.
+F-01 aporta infraestructura y herramientas; F-02 procesa ER en secuencia por orden,
+persiste estado y ledger y los expone por HTTP desde las dos instancias.
 
 ## Features
 
@@ -13,7 +13,7 @@ Esta tabla es la única fuente del estado de implementación.
 | ID | Feature | Estado |
 | --- | --- | --- |
 | F-01 | Entorno, OpenSpec, AGENTS.md y Spotless | Implementado |
-| F-02 | Procesamiento y consulta de órdenes | Pendiente |
+| F-02 | Procesamiento y consulta de órdenes | Implementado |
 | F-03 | Idempotencia y resultados persistidos | Pendiente |
 | F-04 | Settlement transaccional | Pendiente |
 | F-05 | Recuperación ante caídas y rebalanceos | Pendiente |
@@ -157,6 +157,7 @@ En PowerShell:
 .\mvnw.cmd spotless:check
 .\mvnw.cmd verify
 pwsh -File scripts/verify-f01.ps1
+pwsh -File scripts/verify-f02.ps1
 ```
 
 En Linux/macOS, reemplazar `.\mvnw.cmd` por `./mvnw`. El script smoke también
@@ -170,6 +171,10 @@ fuentes. El build de imagen omite tests, pero mantiene ese check; no reemplaza
 
 El smoke detiene y recrea contenedores del proyecto. Ejecutarlo sobre el entorno
 local de demostración. Usa datos aislados y los limpia; conserva los volúmenes.
+El smoke F-02 publica órdenes en ambas particiones, valida estado y ledger desde
+8081/8082, reinicia las aplicaciones y reenvía terminales. Espera offsets
+confirmados con lag cero; conserva sus órdenes con IDs aislados para inspección.
+`-SkipBuild` permite usar una imagen ya construida.
 
 ## Persistencia y diagnóstico
 
@@ -200,6 +205,10 @@ Para validar: `openspec validate --all --strict`.
 tres pruebas de integración, smoke completo de dos instancias, recuperación de
 dependencias, persistencia y build desde un clon limpio. Las tres specs están
 sincronizadas y el change está archivado.
+
+[Evidencia de F-02](openspec/changes/archive/2026-10-18-f02-order-processing-and-query/verification.md):
+cinco pruebas unitarias y once de integración (incluidas las tres de F-01), más
+el smoke de dos instancias con secuencia, duplicados y persistencia tras reinicio.
 
 Kafka usa un solo broker: el entorno verifica caídas de aplicaciones y reinicios,
 no supervivencia a pérdida física del volumen. La presencia de transacciones Kafka
