@@ -2,9 +2,9 @@
 
 ## 1. Contrato y dominio
 
-- [ ] 1.1 Implementar el modelo y parser JSON/key para `fixId`, `numericOrderId`, status, `nominalAmounts`, `leavesNominalAmount`, `accumulativeNominalAmount` y `transactionTime`, conservando los demás campos; verificar con pruebas de ejemplo del enunciado, faltantes, key distinta, tiempo local y cantidades fuera de contrato.
-- [ ] 1.2 Implementar las transiciones puras de la orden con snapshots de acumulado y restante; verificar con pruebas de `NEW`, parciales sucesivos, `FILLED`, `CANCELLED`, total inconsistente y duplicado terminal evaluado antes de la transición.
-- [ ] 1.3 Documentar en README el contrato JSON/key y las reglas de transición sin cambiar F-02 de Pendiente; verificar que los ejemplos pasan el parser y registrar en DECISIONS los supuestos sobre `fixId`, cancelación y contador.
+- [x] 1.1 Implementar el modelo y parser JSON/key para `fixId`, `numericOrderId`, status, `nominalAmounts`, `leavesNominalAmount`, `accumulativeNominalAmount` y `transactionTime`, conservando los demás campos; verificar con pruebas de ejemplo del enunciado, faltantes, key distinta, tiempo local y cantidades fuera de contrato.
+- [x] 1.2 Implementar las transiciones puras de la orden con snapshots de acumulado y restante; verificar con pruebas de `NEW`, parciales sucesivos, `FILLED`, `CANCELLED`, total inconsistente y duplicado terminal evaluado antes de la transición.
+- [x] 1.3 Documentar en README el contrato JSON/key y las reglas de transición sin cambiar F-02 de Pendiente; agregar en AGENTS.md y README.md el enlace a `challenge-arch-max-capital..pdf` en la raíz; verificar enlaces y ejemplos con el parser y registrar en DECISIONS los supuestos sobre `fixId`, cancelación y contador.
 - [ ] 1.4 Aplicar Spotless y crear un commit Conventional Commit del dominio; verificar `.\mvnw.cmd spotless:check` y las pruebas unitarias.
 
 ## 2. Estado y ledger SQL

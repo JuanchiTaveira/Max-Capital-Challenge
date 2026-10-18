@@ -1,6 +1,8 @@
 # Max Capital — challenge backend
 
 Servicio de procesamiento de ExecutionReports desarrollado por features con OpenSpec.
+El enunciado está en [challenge-arch-max-capital..pdf](challenge-arch-max-capital..pdf),
+en la raíz del repositorio.
 F-01 prepara infraestructura y herramientas; las garantías de negocio se incorporan
 desde F-02. Las dos instancias de F-01 están conectadas, todavía sin consumir ER.
 
@@ -70,6 +72,25 @@ de este ejercicio. Se pueden cambiar con `POSTGRES_DB`, `POSTGRES_USER` y
 `DB_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS`, `INSTANCE_ID` y `SERVER_PORT`.
 
 ## Formato y pruebas
+
+### Contrato de ExecutionReport
+
+El productor debe publicar JSON UTF-8 con key igual a `numericOrderId` en decimal
+canónico. Campos obligatorios: `fixId` y `numericOrderId` enteros positivos de
+64 bits, `status`, `nominalAmounts`, `leavesNominalAmount`,
+`accumulativeNominalAmount` y `transactionTime` ISO-8601 local o con offset.
+Las cantidades admiten 12 dígitos enteros y 8 decimales sin redondear.
+[Ejemplo del formato del enunciado](examples/execution-report.json). Los campos
+adicionales se conservan en el ledger. El ejemplo es un parcial: debe publicarse
+después del NEW correspondiente.
+
+La orden empieza con NEW (acumulado cero y restante total); los parciales aumentan
+el acumulado y reducen el restante. FILLED alcanza el total con restante cero;
+CANCELLED termina con restante cero y acumulado no decreciente. Las cantidades
+son snapshots: no se suman al acumulado anterior. El contador incluye cada ER
+aplicado, también NEW y terminal. `transactionTime` no establece secuencia.
+
+### Comandos de verificación
 
 En PowerShell:
 

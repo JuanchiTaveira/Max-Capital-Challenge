@@ -50,10 +50,10 @@ pendientes.
 
 ## 5. Estado mutable y ledger
 
-Se prevé calcular transiciones desde el estado persistido más el ER: NEW inicial,
-parciales y terminal FILLED/CANCELLED. Los acumulados serán snapshots, sin sumarlos como
-deltas. El contador partirá del valor anterior. Estas reglas de dominio aún no están
-implementadas.
+El dominio calcula cada transición desde el estado anterior y el ER entrante. Exige NEW
+inicial, cantidades compatibles y acumulado no decreciente; rechaza nuevos reportes
+sobre FILLED o CANCELLED. Los acumulados son snapshots: se validan y adoptan, sin
+sumarlos al acumulado previo. El contador se incrementa desde su valor anterior.
 
 Se prevé conservar el ER completo en un ledger con clave autoincremental y una entrada
 por reporte efectivamente aplicado. Su persistencia todavía está pendiente.

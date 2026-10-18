@@ -5,7 +5,9 @@
 F-01 aporta un módulo Java 25 con Spring Boot, dos instancias Compose, un grupo
 consumidor configurado pero sin listener, PostgreSQL compartido con Flyway en el
 esquema `app` y `execution-reports` con dos particiones. No hay tablas de negocio.
-El PDF del enunciado muestra una estructura de ER aproximada, no un esquema JSON
+El enunciado `challenge-arch-max-capital..pdf` está en la raíz del repositorio;
+AGENTS.md y README.md deben enlazarlo como fuente de requisitos.
+El PDF muestra una estructura de ER aproximada, no un esquema JSON
 formal, y pide una consulta HTTP que reúna estado y ledger. Ver `proposal.md` y
 las tres specs de este change para el contrato propuesto.
 

@@ -19,6 +19,8 @@ y su historial desde cualquiera de las dos instancias.
   la base compartida.
 - Verificar el flujo con Kafka y PostgreSQL reales, incluida la ejecución con dos
   instancias y la visibilidad de los datos en ambas.
+- Referenciar en AGENTS.md y README.md el enunciado
+  `challenge-arch-max-capital..pdf`, disponible en la raíz del repositorio.
 
 ## Capabilities
 

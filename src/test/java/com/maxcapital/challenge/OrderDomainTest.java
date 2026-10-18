@@ -1,0 +1,124 @@
+package com.maxcapital.challenge;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
+
+import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
+import com.maxcapital.challenge.application.OrderRepository;
+import com.maxcapital.challenge.application.ProcessExecutionReport;
+import com.maxcapital.challenge.domain.ExecutionReport;
+import com.maxcapital.challenge.domain.OrderState;
+import com.maxcapital.challenge.domain.OrderStatus;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.Test;
+
+class OrderDomainTest {
+  private final ExecutionReportParser parser = new ExecutionReportParser();
+
+  @Test
+  void detectsDuplicateBeforeEvaluatingTerminalTransition() {
+    var repository = mock(OrderRepository.class);
+    when(repository.lock(2)).thenReturn(stateAfterFill());
+    when(repository.match(2, 1, "payload")).thenReturn(OrderRepository.ReportMatch.IDENTICAL);
+    new ProcessExecutionReport(repository).process(report(OrderStatus.FILLED, 10, 0), "payload");
+    verify(repository, never()).save(any());
+    verify(repository, never()).append(any(), any());
+  }
+
+  @Test
+  void parsesDocumentedPayloadWithoutLosingFieldsOrDecimalPrecision() throws Exception {
+    var parsed =
+        parser.parse("13144742", Files.readAllBytes(Path.of("examples/execution-report.json")));
+    assertThat(parsed.report().fixId()).isEqualTo(523130930000307L);
+    assertThat(parsed.report().transactionTime()).isEqualTo("2026-07-20T18:08:52.129");
+    assertThat(parsed.payload()).contains("secondaryTradeId", "executionPrice", "marketOrderId");
+    var decimal =
+        json().replace("\"nominalAmounts\":10", "\"nominalAmounts\":999999999999.12345678");
+    assertThat(parse(decimal).nominalAmounts()).isEqualByComparingTo("999999999999.12345678");
+  }
+
+  @Test
+  void rejectsAmbiguousOrInvalidEnvelopes() {
+    assertThatThrownBy(() -> parser.parse("02", json().getBytes(StandardCharsets.UTF_8)))
+        .isInstanceOf(IllegalArgumentException.class);
+    for (var invalid :
+        new String[] {
+          json().replace("\"fixId\":1,", ""),
+          json().replace("\"fixId\":1", "\"fixId\":9223372036854775808"),
+          json().replace("\"nominalAmounts\":10", "\"nominalAmounts\":0.000000001"),
+          json().replace("\"nominalAmounts\":10", "\"nominalAmounts\":1000000000000"),
+          json().replace("NEW", "UNKNOWN"),
+          json().replace("2026-07-20T18:08:52.129", "yesterday"),
+          json().replace("\"fixId\":1", "\"fixId\":1,\"fixId\":2"),
+          json() + " {}"
+        }) {
+      assertThatThrownBy(() -> parse(invalid)).isInstanceOf(RuntimeException.class);
+    }
+  }
+
+  @Test
+  void computesStateFromPreviousStateAndSnapshots() {
+    var first = report(OrderStatus.NEW, 0, 10);
+    var state = OrderState.initial(first).apply(first);
+    state = state.apply(report(OrderStatus.PARTIALLY_FILLED, 3, 7));
+    state = state.apply(report(OrderStatus.PARTIALLY_FILLED, 7, 3));
+    assertThat(state.accumulativeNominalAmount()).isEqualByComparingTo("7");
+    state = state.apply(report(OrderStatus.FILLED, 10, 0));
+    assertThat(state.appliedExecutionCount()).isEqualTo(4);
+    assertThatThrownBy(() -> stateAfterFill().apply(report(OrderStatus.FILLED, 10, 0)))
+        .hasMessageContaining("transición inválida");
+  }
+
+  @Test
+  void supportsCancellationAndRejectsMissingNewAndContradictorySnapshots() {
+    var first = report(OrderStatus.NEW, 0, 10);
+    var state = OrderState.initial(first).apply(first);
+    assertThat(state.apply(report(OrderStatus.CANCELLED, 0, 0)).status())
+        .isEqualTo(OrderStatus.CANCELLED);
+    for (var invalid :
+        new ExecutionReport[] {
+          report(OrderStatus.FILLED, 9, 0),
+          report(OrderStatus.PARTIALLY_FILLED, 3, 8),
+          report(OrderStatus.NEW, 0, 10)
+        }) {
+      assertThatThrownBy(() -> state.apply(invalid)).isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThatThrownBy(() -> OrderState.initial(first).apply(report(OrderStatus.FILLED, 10, 0)))
+        .isInstanceOf(IllegalArgumentException.class);
+    var partial = state.apply(report(OrderStatus.PARTIALLY_FILLED, 7, 3));
+    assertThatThrownBy(() -> partial.apply(report(OrderStatus.CANCELLED, 6, 0)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static OrderState stateAfterFill() {
+    var first = report(OrderStatus.NEW, 0, 10);
+    return OrderState.initial(first).apply(first).apply(report(OrderStatus.FILLED, 10, 0));
+  }
+
+  private static ExecutionReport report(OrderStatus status, int accumulated, int leaves) {
+    return new ExecutionReport(
+        1,
+        2,
+        status,
+        BigDecimal.TEN,
+        BigDecimal.valueOf(leaves),
+        BigDecimal.valueOf(accumulated),
+        "2026-07-20T18:08:52.129");
+  }
+
+  private ExecutionReport parse(String text) {
+    return parser.parse("2", text.getBytes(StandardCharsets.UTF_8)).report();
+  }
+
+  private static String json() {
+    return """
+        {"fixId":1,"numericOrderId":2,"status":"NEW","nominalAmounts":10,
+        "leavesNominalAmount":10,"accumulativeNominalAmount":0,
+        "transactionTime":"2026-07-20T18:08:52.129"}
+        """;
+  }
+}
