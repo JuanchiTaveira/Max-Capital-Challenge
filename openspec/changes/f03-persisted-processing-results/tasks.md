@@ -24,8 +24,8 @@
 
 ## 4. Verificación integral y evidencia de F-03
 
-- [ ] 4.1 Ejecutar `.\mvnw.cmd verify`, `.\mvnw.cmd spotless:check` y la regresión de dos instancias `docker compose --profile tools run --build --rm verify-f02`; verificar que permanecen correctos estado, secuencia, deduplicación, consulta y persistencia, sin eliminar volúmenes ni usar un build de imagen como reemplazo de tests.
-- [ ] 4.2 Registrar en `verification.md` comandos, resultados observados y correspondencia entre escenarios de ambas delta specs y pruebas; ejecutar `openspec validate --all --strict`. Sólo si se cumplen todos los criterios, marcar F-03 implementada en la tabla del README, ajustar decisiones propuestas a garantías observadas y crear el commit Conventional Commit de cierre. Si una dependencia impide verificar, conservar tareas y feature pendientes y registrar el motivo.
+- [x] 4.1 Ejecutar `.\mvnw.cmd verify`, `.\mvnw.cmd spotless:check` y la regresión de dos instancias `docker compose --profile tools run --build --rm verify-f02`; verificar que permanecen correctos estado, secuencia, deduplicación, consulta y persistencia, sin eliminar volúmenes ni usar un build de imagen como reemplazo de tests.
+- [x] 4.2 Registrar en `verification.md` comandos, resultados observados y correspondencia entre escenarios de ambas delta specs y pruebas; ejecutar `openspec validate --all --strict`. Sólo si se cumplen todos los criterios, marcar F-03 implementada en la tabla del README, ajustar decisiones propuestas a garantías observadas y crear el commit Conventional Commit de cierre. Si una dependencia impide verificar, conservar tareas y feature pendientes y registrar el motivo.
 
 ## Workflow follow-up
 

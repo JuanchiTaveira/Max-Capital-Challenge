@@ -4,7 +4,8 @@ Servicio de procesamiento de ExecutionReports desarrollado por features con Open
 El enunciado está en [challenge-arch-max-capital..pdf](challenge-arch-max-capital..pdf),
 en la raíz del repositorio.
 F-01 aporta infraestructura y herramientas; F-02 procesa ER en secuencia por orden,
-persiste estado y ledger y los expone por HTTP desde las dos instancias.
+persiste estado y ledger y los expone por HTTP desde las dos instancias. F-03
+conserva el resultado de cada posición Kafka resuelta para recuperarlo en reentregas.
 
 ## Features
 
@@ -14,7 +15,7 @@ Esta tabla es la única fuente del estado de implementación.
 | --- | --- | --- |
 | F-01 | Entorno, OpenSpec, AGENTS.md y Spotless | Implementado |
 | F-02 | Procesamiento y consulta de órdenes | Implementado |
-| F-03 | Idempotencia y resultados persistidos | Pendiente |
+| F-03 | Idempotencia y resultados persistidos | Implementado |
 | F-04 | Settlement transaccional | Pendiente |
 | F-05 | Recuperación ante caídas y rebalanceos | Pendiente |
 | F-06 | Cuarentena y recuperación ordenada | Pendiente |
@@ -364,3 +365,10 @@ Kafka usa un solo broker: el entorno verifica caídas de aplicaciones y reinicio
 no supervivencia a pérdida física del volumen. La presencia de transacciones Kafka
 no demuestra por sí sola settlement exactamente una vez. Esa garantía queda
 pendiente de F-04/F-05.
+
+[Evidencia de F-03](openspec/changes/f03-persisted-processing-results/verification.md):
+suite completa con 5 unitarias y 21 integraciones, resultados inmutables,
+concurrencia y rollback SQL, falla controlada de confirmación Kafka posterior al
+commit SQL, migración V1→V2 conservando datos, smoke de dos instancias y prueba
+manual Windows PowerShell. Las caídas reales/rebalanceos durante escritura y el
+settlement siguen pendientes en F-04/F-05.
