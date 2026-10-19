@@ -9,11 +9,11 @@
 
 ## 2. Aplicación atómica y recuperación inmutable
 
-- [ ] 2.1 Modificar `ProcessExecutionReport` para recibir posición y devolver el resultado después del commit de `orderTransactionManager`; buscar antes y después del lock, conservar la comparación de identidad previa a transición y guardar resultado/efectos en una transacción. Verificar `APPLIED` nuevo, `DUPLICATE` en otra posición y replay de ambos con orden ya avanzada, comparando resultado completo y cardinalidad de resultados/ledger/contador.
-- [ ] 2.2 Verificar con transacciones concurrentes en PostgreSQL la misma posición/ER (un único resultado idéntico para ambos) y dos posiciones con igual ER (un `APPLIED`, un `DUPLICATE`, un ledger y un incremento); comprobar que otra key o contenido para una posición existente falla sin sobrescribirla.
-- [ ] 2.3 Inyectar fallas SQL de test en inserción del resultado y del ledger; demostrar rollback de resultado, orden y contador tanto en creación como en actualización, y recuperación sin doble aplicación al retirar la falla. Verificar también que conflicto de identidad y transición inválida no crean resultados exitosos.
-- [ ] 2.4 Probar recuperación de resultados desde un segundo contexto de aplicación y después de cerrar/reabrir contextos contra la misma base, sin reconstruir snapshots desde `orders`; incluir ER aplicado con V1 y sin resultado que al reentregarse genera `DUPLICATE`, sin backfill de offsets históricos.
-- [ ] 2.5 Actualizar DECISIONS con evidencia SQL y límites todavía pendientes, aplicar/comprobar Spotless y ejecutar las pruebas de integración afectadas; crear un commit Conventional Commit del caso de uso sólo con los resultados observados.
+- [x] 2.1 Modificar `ProcessExecutionReport` para recibir posición y devolver el resultado después del commit de `orderTransactionManager`; buscar antes y después del lock, conservar la comparación de identidad previa a transición y guardar resultado/efectos en una transacción. Verificar `APPLIED` nuevo, `DUPLICATE` en otra posición y replay de ambos con orden ya avanzada, comparando resultado completo y cardinalidad de resultados/ledger/contador.
+- [x] 2.2 Verificar con transacciones concurrentes en PostgreSQL la misma posición/ER (un único resultado idéntico para ambos) y dos posiciones con igual ER (un `APPLIED`, un `DUPLICATE`, un ledger y un incremento); comprobar que otra key o contenido para una posición existente falla sin sobrescribirla.
+- [x] 2.3 Inyectar fallas SQL de test en inserción del resultado y del ledger; demostrar rollback de resultado, orden y contador tanto en creación como en actualización, y recuperación sin doble aplicación al retirar la falla. Verificar también que conflicto de identidad y transición inválida no crean resultados exitosos.
+- [x] 2.4 Probar recuperación de resultados desde un segundo contexto de aplicación y después de cerrar/reabrir contextos contra la misma base, sin reconstruir snapshots desde `orders`; incluir ER aplicado con V1 y sin resultado que al reentregarse genera `DUPLICATE`, sin backfill de offsets históricos.
+- [x] 2.5 Actualizar DECISIONS con evidencia SQL y límites todavía pendientes, aplicar/comprobar Spotless y ejecutar las pruebas de integración afectadas; crear un commit Conventional Commit del caso de uso sólo con los resultados observados.
 
 ## 3. Integración Kafka y frontera de confirmación
 

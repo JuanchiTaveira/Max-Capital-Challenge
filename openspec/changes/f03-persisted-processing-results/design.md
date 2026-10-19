@@ -68,7 +68,7 @@ Agregar una migración V2 para `app.processing_results`:
 
 | Campo | Restricción o propósito |
 | --- | --- |
-| `topic`, `partition`, `offset` | PK compuesta; topic no vacío, partición y offset no negativos |
+| `topic`, `partition_id`, `record_offset` | PK compuesta de topic/partition/offset; topic no vacío, partición y offset no negativos |
 | `outcome` | Obligatorio, `APPLIED` o `DUPLICATE` |
 | `numeric_order_id`, `fix_id` | Identidad del ER; referencia coherente con el ledger |
 | `ledger_id` | Referencia obligatoria a la entrada aplicada, también para `DUPLICATE` |

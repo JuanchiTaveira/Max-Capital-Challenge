@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
+import com.maxcapital.challenge.application.InputPosition;
 import com.maxcapital.challenge.application.OrderRepository;
 import com.maxcapital.challenge.application.ProcessExecutionReport;
+import com.maxcapital.challenge.application.ProcessingResults;
 import com.maxcapital.challenge.domain.ExecutionReport;
 import com.maxcapital.challenge.domain.OrderState;
 import com.maxcapital.challenge.domain.OrderStatus;
@@ -26,7 +28,9 @@ class OrderDomainTest {
     when(repository.lock(2)).thenReturn(stateAfterFill());
     when(repository.match(2, 1, "payload"))
         .thenReturn(Optional.of(new OrderRepository.ReportMatch(1, true)));
-    new ProcessExecutionReport(repository).process(report(OrderStatus.FILLED, 10, 0), "payload");
+    new ProcessExecutionReport(repository, mock(ProcessingResults.class))
+        .process(
+            new InputPosition("unit-reports", 0, 0), report(OrderStatus.FILLED, 10, 0), "payload");
     verify(repository, never()).save(any());
     verify(repository, never()).append(any(), any());
   }

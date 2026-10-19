@@ -210,3 +210,10 @@ es `(topic, partition_id, record_offset)`; una FK compuesta al ledger impide
 asociar un resultado con una identidad distinta. Las pruebas de esquema verifican
 base nueva, actualización desde V1 con datos, round-trip y comparación JSONB.
 La integración atómica con el caso de uso todavía está pendiente en este punto.
+
+La integración SQL del segundo incremento está verificada con transacciones
+reales: resultado y efectos se confirman juntos; fallas al insertar resultado o
+ledger revierten creación y actualización. Dos contextos concurrentes recuperan
+el mismo resultado para una posición y distinguen republicaciones. Cerrar y
+reabrir contextos mantiene snapshots originales. La integración Kafka y la
+verificación integral siguen pendientes antes de declarar F-03 implementada.

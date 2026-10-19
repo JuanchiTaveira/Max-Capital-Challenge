@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
 import com.maxcapital.challenge.adapter.out.kafka.KafkaHealthIndicator;
+import com.maxcapital.challenge.application.InputPosition;
 import com.maxcapital.challenge.application.ProcessExecutionReport;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -13,6 +14,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +32,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = "spring.kafka.listener.auto-startup=false")
 class OrderPersistenceIT {
+  private static final AtomicLong OFFSETS = new AtomicLong();
   @MockitoBean KafkaHealthIndicator kafkaHealth;
 
   @Value("${local.server.port}")
@@ -194,7 +197,10 @@ class OrderPersistenceIT {
                 .path("numericOrderId")
                 .asString(),
             payload.getBytes(StandardCharsets.UTF_8));
-    processor.process(parsed.report(), parsed.payload());
+    processor.process(
+        new InputPosition("sql-it", 0, OFFSETS.getAndIncrement()),
+        parsed.report(),
+        parsed.payload());
   }
 
   private long count(long order) {
