@@ -17,11 +17,11 @@ public class ProcessExecutionReport {
     repository.initialize(report);
     var previous = repository.lock(report.numericOrderId());
     var match = repository.match(report.numericOrderId(), report.fixId(), payload);
-    if (match == OrderRepository.ReportMatch.IDENTICAL) {
+    if (match.isPresent()) {
+      if (!match.get().identical()) {
+        throw new IllegalArgumentException("contenido distinto para fixId " + report.fixId());
+      }
       return;
-    }
-    if (match == OrderRepository.ReportMatch.CONFLICTING) {
-      throw new IllegalArgumentException("contenido distinto para fixId " + report.fixId());
     }
     repository.save(previous.apply(report));
     repository.append(report, payload);

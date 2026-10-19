@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class OrderDomainTest {
@@ -23,7 +24,8 @@ class OrderDomainTest {
   void detectsDuplicateBeforeEvaluatingTerminalTransition() {
     var repository = mock(OrderRepository.class);
     when(repository.lock(2)).thenReturn(stateAfterFill());
-    when(repository.match(2, 1, "payload")).thenReturn(OrderRepository.ReportMatch.IDENTICAL);
+    when(repository.match(2, 1, "payload"))
+        .thenReturn(Optional.of(new OrderRepository.ReportMatch(1, true)));
     new ProcessExecutionReport(repository).process(report(OrderStatus.FILLED, 10, 0), "payload");
     verify(repository, never()).save(any());
     verify(repository, never()).append(any(), any());

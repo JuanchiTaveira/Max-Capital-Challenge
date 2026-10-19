@@ -2,10 +2,10 @@
 
 ## 1. Contrato de resultado y persistencia aditiva
 
-- [ ] 1.1 Agregar `InputPosition`, `ProcessingResult` y el puerto de resultados en aplicación, independientes de tipos Kafka/JDBC, con `APPLIED`/`DUPLICATE`, identidad, ledger y snapshot; verificar compilación e integración con los adaptadores en las tareas siguientes, sin tests de records triviales.
-- [ ] 1.2 Agregar V2 con `app.processing_results`, PK por posición, outcome y snapshot obligatorios, restricciones de valores y referencias coherentes a identidad/ledger; verificar con PostgreSQL Testcontainers tanto una base vacía como una migración desde V1 con datos, rechazando posiciones duplicadas y referencias inconsistentes sin alterar órdenes/ledger previos.
-- [ ] 1.3 Implementar búsqueda/inserción JDBC de resultados y recuperación del ER desde ledger, y ampliar `OrderRepository` para devolver el ledger coincidente y el ID al insertar; verificar round-trip completo, distinción de topic/partición con igual offset y comparación JSONB con campos extra, propiedades reordenadas y números equivalentes.
-- [ ] 1.4 Documentar en DECISIONS el esquema y los supuestos como propuesta hasta contar con integración del caso de uso; ejecutar `.\mvnw.cmd spotless:apply`, los tests SQL correspondientes y `.\mvnw.cmd spotless:check`, y crear un commit Conventional Commit de este incremento sólo si pasan.
+- [x] 1.1 Agregar `InputPosition`, `ProcessingResult` y el puerto de resultados en aplicación, independientes de tipos Kafka/JDBC, con `APPLIED`/`DUPLICATE`, identidad, ledger y snapshot; verificar compilación e integración con los adaptadores en las tareas siguientes, sin tests de records triviales.
+- [x] 1.2 Agregar V2 con `app.processing_results`, PK por posición, outcome y snapshot obligatorios, restricciones de valores y referencias coherentes a identidad/ledger; verificar con PostgreSQL Testcontainers tanto una base vacía como una migración desde V1 con datos, rechazando posiciones duplicadas y referencias inconsistentes sin alterar órdenes/ledger previos.
+- [x] 1.3 Implementar búsqueda/inserción JDBC de resultados y recuperación del ER desde ledger, y ampliar `OrderRepository` para devolver el ledger coincidente y el ID al insertar; verificar round-trip completo, distinción de topic/partición con igual offset y comparación JSONB con campos extra, propiedades reordenadas y números equivalentes.
+- [x] 1.4 Documentar en DECISIONS el esquema y los supuestos como propuesta hasta contar con integración del caso de uso; ejecutar `.\mvnw.cmd spotless:apply`, los tests SQL correspondientes y `.\mvnw.cmd spotless:check`, y crear un commit Conventional Commit de este incremento sólo si pasan.
 
 ## 2. Aplicación atómica y recuperación inmutable
 

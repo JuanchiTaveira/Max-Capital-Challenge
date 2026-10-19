@@ -4,6 +4,7 @@ import com.maxcapital.challenge.application.OrderRepository;
 import com.maxcapital.challenge.domain.ExecutionReport;
 import com.maxcapital.challenge.domain.OrderState;
 import com.maxcapital.challenge.domain.OrderStatus;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -44,20 +45,18 @@ public class JdbcOrderRepository implements OrderRepository {
   }
 
   @Override
-  public ReportMatch match(long numericOrderId, long fixId, String payload) {
+  public Optional<ReportMatch> match(long numericOrderId, long fixId, String payload) {
     var matches =
-        jdbc.queryForList(
+        jdbc.query(
             """
-        SELECT report = CAST(? AS jsonb) FROM app.execution_report_ledger
+        SELECT ledger_id, report = CAST(? AS jsonb) AS identical FROM app.execution_report_ledger
         WHERE numeric_order_id = ? AND fix_id = ?
         """,
-            Boolean.class,
+            (row, index) -> new ReportMatch(row.getLong("ledger_id"), row.getBoolean("identical")),
             payload,
             numericOrderId,
             fixId);
-    return matches.isEmpty()
-        ? ReportMatch.ABSENT
-        : matches.getFirst() ? ReportMatch.IDENTICAL : ReportMatch.CONFLICTING;
+    return matches.stream().findFirst();
   }
 
   @Override
@@ -76,12 +75,13 @@ public class JdbcOrderRepository implements OrderRepository {
   }
 
   @Override
-  public void append(ExecutionReport report, String payload) {
-    jdbc.update(
+  public long append(ExecutionReport report, String payload) {
+    return jdbc.queryForObject(
         """
         INSERT INTO app.execution_report_ledger (numeric_order_id, fix_id, report)
-        VALUES (?, ?, CAST(? AS jsonb))
+        VALUES (?, ?, CAST(? AS jsonb)) RETURNING ledger_id
         """,
+        Long.class,
         report.numericOrderId(),
         report.fixId(),
         payload);

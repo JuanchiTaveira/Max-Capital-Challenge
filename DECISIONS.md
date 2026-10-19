@@ -204,3 +204,9 @@ publicación con el offset, y F-05 probar caídas, rebalanceos y resultados inci
 Un consumidor `read_committed` sólo tiene actualmente garantías sobre la entrada.
 El diseño, sus alternativas, migración y criterios de aceptación quedan en el
 change; esta sección se actualizará con evidencia al implementarlo.
+
+El primer incremento de F-03 agrega la migración V2 y el adaptador SQL. La PK
+es `(topic, partition_id, record_offset)`; una FK compuesta al ledger impide
+asociar un resultado con una identidad distinta. Las pruebas de esquema verifican
+base nueva, actualización desde V1 con datos, round-trip y comparación JSONB.
+La integración atómica con el caso de uso todavía está pendiente en este punto.
