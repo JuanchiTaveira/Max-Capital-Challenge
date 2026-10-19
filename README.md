@@ -366,7 +366,7 @@ no supervivencia a pérdida física del volumen. La presencia de transacciones K
 no demuestra por sí sola settlement exactamente una vez. Esa garantía queda
 pendiente de F-04/F-05.
 
-[Evidencia de F-03](openspec/changes/f03-persisted-processing-results/verification.md):
+[Evidencia de F-03](openspec/changes/archive/2026-10-19-f03-persisted-processing-results/verification.md):
 suite completa con 5 unitarias y 21 integraciones, resultados inmutables,
 concurrencia y rollback SQL, falla controlada de confirmación Kafka posterior al
 commit SQL, migración V1→V2 conservando datos, smoke de dos instancias y prueba
