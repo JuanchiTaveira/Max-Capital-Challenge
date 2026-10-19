@@ -172,3 +172,35 @@ Kafka](src/test/java/com/maxcapital/challenge/ExecutionReportKafkaIT.java) de ó
 intercaladas, reentrega y errores sin avance de offset. El [smoke de dos
 instancias](scripts/verify-f02.ps1) comprueba consulta y persistencia tras reinicio.
 Estas pruebas no demuestran settlement ni recuperación completa de mensajes permanentes.
+
+## 9. Resultado por posición Kafka: propuesta de F-03
+
+El change `f03-persisted-processing-results` propone complementar la identidad del
+ER con un resultado inmutable por `(topic, partition, offset)`. Todavía no está
+implementado. Un registro nuevo se clasificaría como `APPLIED` o `DUPLICATE` y
+conservaría identidad del ER, referencia al ledger y snapshot de la orden al
+resolver esa posición, en la misma transacción SQL que sus efectos.
+
+La reentrega de la misma posición recuperaría el resultado original, incluso un
+`APPLIED` anterior, sin reclasificarlo a partir del estado actual. Republicar el
+ER en otra posición produciría `DUPLICATE` sin agregar ledger ni contador. Para
+ese duplicado, el snapshot sería el vigente al resolver la nueva posición y el
+ledger seguiría apuntando al ER originalmente aplicado. Esta distinción evita
+confundir un snapshot terminal con una nueva aplicación terminal.
+
+Se mantendría la comparación completa JSONB y el lock por orden, con una segunda
+lectura del resultado después de adquirirlo para resolver intentos concurrentes.
+Los errores continuarían pendientes con la política actual: no se propone guardar
+fallas como resultados definitivos ni habilitar avance del offset por ellas. La
+ausencia de resultado no distinguiría un registro no intentado de uno fallido.
+
+F-02 no conserva posiciones en su ledger, por lo que no se reconstruirían
+resultados históricos ni se inventaría su relación con offsets. La cobertura
+comenzaría al desplegar F-03 con ambas instancias detenidas durante la actualización;
+una reentrega de un ER previo sin resultado se resolvería por identidad de negocio.
+
+Esta base no garantiza settlements: F-04 debe definir la salida y coordinar su
+publicación con el offset, y F-05 probar caídas, rebalanceos y resultados inciertos.
+Un consumidor `read_committed` sólo tiene actualmente garantías sobre la entrada.
+El diseño, sus alternativas, migración y criterios de aceptación quedan en el
+change; esta sección se actualizará con evidencia al implementarlo.
