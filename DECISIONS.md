@@ -45,9 +45,8 @@ asume que identifiquen todos los reportes de estado, incluidos NEW y CANCELLED.
 
 Topic, partición y offset identifican un registro Kafka. Una reentrega conserva esa
 posición, pero republicar el mismo ER crea otro registro: deduplicar sólo por offset
-no cubriría ese caso. La pareja elegida identifica el reporte de negocio. Un futuro
-resultado persistido por posición Kafka complementaría esa identidad para recuperar el
-procesamiento de cada registro.
+no cubriría ese caso. La pareja elegida identifica el reporte de negocio. F-03 complementa esa identidad con un resultado
+persistido por posición Kafka para recuperar el procesamiento de cada registro.
 
 Una restricción única sobre esa pareja protege el ledger. Bajo el lock de la orden se
 compara el JSONB completo: contenido equivalente es un no-op; la misma identidad con
@@ -64,7 +63,7 @@ transaccional por ER.
 
 En una transacción SQL se inicializa la orden si falta, se bloquea su fila con `SELECT
 FOR UPDATE`, se deduplica, se calcula el nuevo estado y se escriben estado, contador y
-ledger. Si cualquier paso falla, todo se revierte. La base y Kafka conservan
+ledger y el resultado de esa posición Kafka. Si cualquier paso falla, todo se revierte. La base y Kafka conservan
 transacciones independientes.
 
 La unicidad protege la creación concurrente de la primera fila; el lock por orden
@@ -133,8 +132,9 @@ fallido a otro topic y aplicar sus sucesores dejaría una orden incompleta: tamb
 definirse cómo se retienen o recuperan esos sucesores. La orden consultada representa
 sólo el prefijo aplicado, sin indicador persistente de incompletitud.
 
-Las pruebas actuales verifican rollback, duplicados y replay tras una falla SQL; el
-smoke verifica persistencia y reentrega después de reinicios. Todavía no inyectan una
+Las pruebas actuales verifican rollback, duplicados, resultados inmutables y replay
+tras fallas SQL o una falla controlada de confirmación Kafka posterior al commit SQL.
+El smoke verifica persistencia y republicación después de reinicios. Todavía no inyectan una
 caída de proceso justo entre commit SQL y offset ni un rebalanceo durante una escritura.
 La recuperación completa de esas fronteras sigue pendiente de F-05.
 
@@ -150,9 +150,9 @@ la reentrega sería un duplicado y no volvería a ejecutar la transición de dom
 eso la intención y los datos del settlement deben quedar recuperables junto con el
 resultado SQL, y la recuperación debe poder completar la publicación pendiente.
 
-F-03/F-04/F-05 deberán resolver y probar la frontera SQL/Kafka, incluidos resultados
-inciertos del commit. Una alternativa en evaluación combina resultados persistidos por
-registro de entrada con salidas y offset en una transacción Kafka. La garantía deberá
+F-03 ya conserva resultados SQL por registro de entrada. F-04/F-05 deberán resolver
+y probar su coordinación con salidas y offset en Kafka, incluidos resultados
+inciertos del commit. Esa transacción Kafka de salida todavía no está implementada. La garantía deberá
 especificar qué observa un consumidor `read_committed`; los efectos externos de un
 consumidor arbitrario necesitan su propio contrato de idempotencia.
 
@@ -173,47 +173,51 @@ intercaladas, reentrega y errores sin avance de offset. El [smoke de dos
 instancias](scripts/verify-f02.ps1) comprueba consulta y persistencia tras reinicio.
 Estas pruebas no demuestran settlement ni recuperación completa de mensajes permanentes.
 
-## 9. Resultado por posición Kafka: propuesta de F-03
+## 9. Resultado por posición Kafka
 
-El change `f03-persisted-processing-results` propone complementar la identidad del
-ER con un resultado inmutable por `(topic, partition, offset)`. Todavía no está
-implementado. Un registro nuevo se clasificaría como `APPLIED` o `DUPLICATE` y
-conservaría identidad del ER, referencia al ledger y snapshot de la orden al
-resolver esa posición, en la misma transacción SQL que sus efectos.
+F-03 conserva un resultado inmutable por `(topic, partition, offset)`, materializado
+como PK `(topic, partition_id, record_offset)`. La identidad de negocio sigue siendo
+`(numericOrderId, fixId)`. Cada posición resuelta guarda `APPLIED` o `DUPLICATE`, la
+referencia al ledger y el snapshot de estado, cantidades y contador de ese momento.
+Una FK compuesta impide asociar un resultado con un ledger de otra identidad.
 
-La reentrega de la misma posición recuperaría el resultado original, incluso un
-`APPLIED` anterior, sin reclasificarlo a partir del estado actual. Republicar el
-ER en otra posición produciría `DUPLICATE` sin agregar ledger ni contador. Para
-ese duplicado, el snapshot sería el vigente al resolver la nueva posición y el
-ledger seguiría apuntando al ER originalmente aplicado. Esta distinción evita
-confundir un snapshot terminal con una nueva aplicación terminal.
+La misma posición devuelve su resultado original, incluso `APPLIED`, sin reclasificar
+ni reconstruir el snapshot desde la orden actual. Un ER republicado en otro offset
+genera `DUPLICATE` y referencia el ledger existente. Su snapshot es el vigente al
+resolver esa nueva posición. Por eso un duplicado tardío de NEW puede mostrar
+snapshot FILLED y apuntar al ledger de NEW: el snapshot por sí solo no determina
+una nueva aplicación terminal ni una salida de settlement.
 
-Se mantendría la comparación completa JSONB y el lock por orden, con una segunda
-lectura del resultado después de adquirirlo para resolver intentos concurrentes.
-Los errores continuarían pendientes con la política actual: no se propone guardar
-fallas como resultados definitivos ni habilitar avance del offset por ellas. La
-ausencia de resultado no distinguiría un registro no intentado de uno fallido.
+El caso de uso busca el resultado antes de tocar la orden y de nuevo después de
+adquirir su lock, porque otro intento pudo confirmar durante la espera. Mantiene
+la comparación JSONB completa y la deduplicación antes de validar terminales.
+Resultado, estado, contador y ledger usan la misma transacción JDBC explícita;
+una falla en cualquiera de sus escrituras revierte todo el intento. La PK de
+posición y la unicidad del ER son respaldo SQL; no se capturan conflictos de
+unicidad para devolver éxito desde una transacción abortada.
 
-F-02 no conserva posiciones en su ledger, por lo que no se reconstruirían
-resultados históricos ni se inventaría su relación con offsets. La cobertura
-comenzaría al desplegar F-03 con ambas instancias detenidas durante la actualización;
-una reentrega de un ER previo sin resultado se resolvería por identidad de negocio.
+Las pruebas SQL verifican rollback en creación y actualización, concurrencia entre
+dos contextos y recuperación de snapshots después de cerrar/reabrir contextos.
+La prueba Kafka hace fallar una confirmación antes de enviarla al broker, después
+del commit SQL: observa resultado durable, offset pendiente y sucesor sin aplicar;
+al reanudar recupera el mismo resultado sin repetir el efecto. Esta inyección no
+prueba kill de proceso, rebalanceo durante escritura ni commit incierto real (F-05).
 
-Esta base no garantiza settlements: F-04 debe definir la salida y coordinar su
-publicación con el offset, y F-05 probar caídas, rebalanceos y resultados inciertos.
-Un consumidor `read_committed` sólo tiene actualmente garantías sobre la entrada.
-El diseño, sus alternativas, migración y criterios de aceptación quedan en el
-change; esta sección se actualizará con evidencia al implementarlo.
+Sólo se guardan resultados exitosos. JSON/key inválido, conflicto de identidad,
+transición inválida y falla SQL mantienen la detención y diagnóstico existentes,
+sin avance de offset. Ausencia de resultado no distingue registro no intentado de
+intento fallido; F-06 debe definir errores persistidos, cuarentena y recuperación.
 
-El primer incremento de F-03 agrega la migración V2 y el adaptador SQL. La PK
-es `(topic, partition_id, record_offset)`; una FK compuesta al ledger impide
-asociar un resultado con una identidad distinta. Las pruebas de esquema verifican
-base nueva, actualización desde V1 con datos, round-trip y comparación JSONB.
-La integración atómica con el caso de uso todavía está pendiente en este punto.
+V2 es aditiva y conserva datos previos. F-02 no tenía posiciones en su ledger:
+no se inventan resultados históricos. Una reentrega sin resultado conocido de un
+ER previo genera `DUPLICATE` por identidad de negocio. El despliegue requiere
+detener ambas aplicaciones para no mezclar consumidores de distintas versiones.
+No hay purga durante el challenge; retención productiva debe coordinar replay y
+resultados. Recreación de topics, cambios de cluster y resets arbitrarios quedan
+fuera del contrato.
 
-La integración SQL del segundo incremento está verificada con transacciones
-reales: resultado y efectos se confirman juntos; fallas al insertar resultado o
-ledger revierten creación y actualización. Dos contextos concurrentes recuperan
-el mismo resultado para una posición y distinguen republicaciones. Cerrar y
-reabrir contextos mantiene snapshots originales. La integración Kafka y la
-verificación integral siguen pendientes antes de declarar F-03 implementada.
+El resultado es una base durable para F-04, no una garantía de settlement. SQL y
+Kafka conservan commits independientes y todavía no se publica ninguna salida.
+F-04 debe definir los datos de salida y coordinar publicación/progreso Kafka;
+F-05 debe comprobar qué observa un consumidor downstream `read_committed` ante
+caídas y rebalanceos. Actualmente `read_committed` sólo controla la entrada.

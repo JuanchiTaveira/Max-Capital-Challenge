@@ -4,14 +4,19 @@ import static com.maxcapital.challenge.TestInfrastructure.report;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import com.maxcapital.challenge.adapter.in.kafka.ExecutionReportListener;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -24,10 +29,18 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.core.ConsumerPostProcessor;
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.listener.AcknowledgingMessageListener;
 import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -68,6 +81,12 @@ class ExecutionReportKafkaIT {
 
   @Autowired JdbcTemplate jdbc;
   @Autowired KafkaListenerEndpointRegistry registry;
+  @Autowired ConsumerFactory<Object, Object> consumers;
+
+  @Autowired
+  ConcurrentKafkaListenerContainerFactory<Object, Object> executionReportContainerFactory;
+
+  @Autowired ExecutionReportListener reportListener;
 
   @BeforeAll
   static void topics() throws Exception {
@@ -116,6 +135,19 @@ class ExecutionReportKafkaIT {
                   Long.class,
                   a))
           .containsExactly(1L, 2L, 3L, 4L);
+      assertThat(
+              jdbc.queryForList(
+                  "SELECT outcome FROM app.processing_results WHERE numeric_order_id=? ORDER BY record_offset",
+                  String.class,
+                  a))
+          .containsExactly("APPLIED", "APPLIED", "APPLIED", "APPLIED", "DUPLICATE");
+      assertThat(resultAt(last))
+          .singleElement()
+          .satisfies(
+              row -> {
+                assertThat(row.get("outcome")).isEqualTo("DUPLICATE");
+                assertThat(row.get("applied_execution_count")).isEqualTo(4L);
+              });
     }
     try (var producer = producer(true)) {
       producer.initTransactions();
@@ -134,6 +166,11 @@ class ExecutionReportKafkaIT {
     assertThat(
             jdbc.queryForList(
                 "SELECT fix_id FROM app.execution_report_ledger WHERE numeric_order_id=9999",
+                Long.class))
+        .containsExactly(2L);
+    assertThat(
+            jdbc.queryForList(
+                "SELECT fix_id FROM app.processing_results WHERE numeric_order_id=9999",
                 Long.class))
         .containsExactly(2L);
   }
@@ -161,6 +198,12 @@ class ExecutionReportKafkaIT {
         awaitStopped();
         assertThat(count(701)).isEqualTo(1);
         assertThat(committed(failed.partition())).isEqualTo(failed.offset());
+        assertThat(resultAt(failed)).isEmpty();
+        assertThat(
+                jdbc.queryForObject(
+                    "SELECT count(*) FROM app.processing_results WHERE numeric_order_id=701",
+                    Long.class))
+            .isEqualTo(1);
       } finally {
         jdbc.execute("DROP TRIGGER fail_kafka_append ON app.execution_report_ledger");
         jdbc.execute("DROP FUNCTION app.fail_kafka_append()");
@@ -174,11 +217,150 @@ class ExecutionReportKafkaIT {
                   "SELECT fix_id FROM app.execution_report_ledger WHERE numeric_order_id=701 ORDER BY ledger_id",
                   Long.class))
           .containsExactly(1L, 2L, 3L);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT count(*) FROM app.processing_results WHERE numeric_order_id=701",
+                  Long.class))
+          .isEqualTo(3);
     }
   }
 
   @Test
   @Order(3)
+  void recoversCommittedResultWhenOffsetCommitFailsBeforeReachingKafka() throws Exception {
+    listener().stop();
+    var fail = new AtomicBoolean(true);
+    var factory = (DefaultKafkaConsumerFactory<Object, Object>) consumers;
+    ConsumerPostProcessor<Object, Object> interceptor =
+        delegate ->
+            (Consumer<Object, Object>)
+                Proxy.newProxyInstance(
+                    Consumer.class.getClassLoader(),
+                    new Class<?>[] {Consumer.class},
+                    (proxy, method, arguments) -> {
+                      if (method.getName().equals("commitSync")
+                          && fail.get()
+                          && jdbc.queryForObject(
+                                  "SELECT count(*) FROM app.processing_results WHERE numeric_order_id=750",
+                                  Long.class)
+                              == 1
+                          && fail.compareAndSet(true, false)) {
+                        throw new IllegalStateException(
+                            "simulated offset confirmation failure before broker");
+                      }
+                      try {
+                        return method.invoke(delegate, arguments);
+                      } catch (InvocationTargetException exception) {
+                        throw exception.getCause();
+                      }
+                    });
+    factory.addPostProcessor(interceptor);
+    try (var producer = producer(false)) {
+      start();
+      var pending = send(producer, 750, report(750, 1, "NEW", 0, 10));
+      var next = send(producer, 750, report(750, 2, "FILLED", 10, 0));
+      awaitStopped();
+      assertThat(fail).isFalse();
+      assertThat(committed(pending.partition())).isLessThanOrEqualTo(pending.offset());
+      assertThat(count(750)).isEqualTo(1);
+      var original = resultAt(pending);
+      assertThat(original)
+          .singleElement()
+          .satisfies(row -> assertThat(row.get("outcome")).isEqualTo("APPLIED"));
+      assertThat(resultAt(next)).isEmpty();
+      start();
+      await()
+          .atMost(Duration.ofSeconds(20))
+          .untilAsserted(
+              () -> assertThat(committed(next.partition())).isGreaterThan(next.offset()));
+      assertThat(resultAt(pending)).isEqualTo(original);
+      assertThat(resultAt(next)).hasSize(1);
+      assertThat(count(750)).isEqualTo(2);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT count(*) FROM app.execution_report_ledger WHERE numeric_order_id=750",
+                  Long.class))
+          .isEqualTo(2);
+    } finally {
+      fail.set(false);
+      factory.removePostProcessor(interceptor);
+    }
+  }
+
+  @Test
+  @Order(4)
+  @ExtendWith(OutputCaptureExtension.class)
+  void keepsInvalidInputsPendingWithNoSuccessResultOrSuccessorApplication(CapturedOutput output)
+      throws Exception {
+    int index = 0;
+    for (String kind : List.of("json", "key", "identity", "transition")) {
+      String topic = "f03-invalid-" + kind;
+      long order = 860 + index++;
+      try (var admin = admin()) {
+        admin
+            .createTopics(List.of(new NewTopic(topic, 2, (short) 1)))
+            .all()
+            .get(20, TimeUnit.SECONDS);
+      }
+      var container = executionReportContainerFactory.createContainer(topic);
+      container.getContainerProperties().setGroupId(topic);
+      container.setupMessageListener(
+          (AcknowledgingMessageListener<String, byte[]>) reportListener::consume);
+      try (var producer = producer(false)) {
+        container.start();
+        await()
+            .atMost(Duration.ofSeconds(30))
+            .untilAsserted(() -> assertThat(container.getAssignedPartitions()).hasSize(2));
+        boolean existing = kind.equals("identity") || kind.equals("transition");
+        if (existing) {
+          var initial = send(producer, topic, order, report(order, 1, "NEW", 0, 10));
+          await()
+              .atMost(Duration.ofSeconds(20))
+              .untilAsserted(
+                  () ->
+                      assertThat(committed(topic, initial.partition()))
+                          .isGreaterThan(initial.offset()));
+        }
+        String invalid =
+            switch (kind) {
+              case "json" -> "{invalid-json";
+              case "key" -> report(order + 1000, 1, "NEW", 0, 10);
+              case "identity" -> report(order, 1, "NEW", 0, 10).replace("VSCPC", "OTHER");
+              default -> report(order, 2, "NEW", 0, 10);
+            };
+        var pending = send(producer, topic, order, invalid);
+        var successor =
+            send(
+                producer,
+                topic,
+                order,
+                report(
+                    order, 3, existing ? "FILLED" : "NEW", existing ? 10 : 0, existing ? 0 : 10));
+        await().atMost(Duration.ofSeconds(20)).until(() -> !container.isRunning());
+        assertThat(resultAt(pending)).isEmpty();
+        assertThat(resultAt(successor)).isEmpty();
+        long offset = committed(topic, pending.partition());
+        assertThat(offset).isLessThanOrEqualTo(pending.offset());
+        assertThat(count(order)).isEqualTo(existing ? 1 : 0);
+        assertThat(output)
+            .contains(
+                "ER pendiente: topic=" + topic,
+                "partition=" + pending.partition(),
+                "offset=" + pending.offset(),
+                "numericOrderId/key=" + order);
+        container.start();
+        await().atMost(Duration.ofSeconds(20)).until(() -> !container.isRunning());
+        assertThat(committed(topic, pending.partition())).isEqualTo(offset);
+        assertThat(resultAt(pending)).isEmpty();
+        assertThat(count(order)).isEqualTo(existing ? 1 : 0);
+      } finally {
+        container.stop();
+      }
+    }
+  }
+
+  @Test
+  @Order(10)
   void preservesPoisonRecordAndDoesNotSkipToTheNextRecord() throws Exception {
     try (var producer = producer(false)) {
       var poison = send(producer, 801, "{invalid-json");
@@ -187,6 +369,7 @@ class ExecutionReportKafkaIT {
       long offset = committed(poison.partition());
       assertThat(offset).isLessThanOrEqualTo(poison.offset());
       assertThat(count(801)).isZero();
+      assertThat(resultAt(poison)).isEmpty();
       listener().start();
       awaitStopped();
       assertThat(committed(poison.partition())).isEqualTo(offset);
@@ -241,10 +424,16 @@ class ExecutionReportKafkaIT {
 
   private static RecordMetadata send(
       KafkaProducer<String, byte[]> producer, long order, String payload) throws Exception {
+    return send(producer, TOPIC, order, payload);
+  }
+
+  private static RecordMetadata send(
+      KafkaProducer<String, byte[]> producer, String topic, long order, String payload)
+      throws Exception {
     return producer
         .send(
             new ProducerRecord<>(
-                TOPIC, Long.toString(order), payload.getBytes(StandardCharsets.UTF_8)))
+                topic, Long.toString(order), payload.getBytes(StandardCharsets.UTF_8)))
         .get(15, TimeUnit.SECONDS);
   }
 
@@ -262,14 +451,26 @@ class ExecutionReportKafkaIT {
   }
 
   private static long committed(int partition) throws Exception {
+    return committed(TOPIC, partition);
+  }
+
+  private static long committed(String group, int partition) throws Exception {
     try (var admin = admin()) {
       var offsets =
           admin
-              .listConsumerGroupOffsets(TOPIC)
+              .listConsumerGroupOffsets(group)
               .partitionsToOffsetAndMetadata()
               .get(10, TimeUnit.SECONDS);
-      var offset = offsets.get(new TopicPartition(TOPIC, partition));
+      var offset = offsets.get(new TopicPartition(group, partition));
       return offset == null ? 0 : offset.offset();
     }
+  }
+
+  private List<Map<String, Object>> resultAt(RecordMetadata metadata) {
+    return jdbc.queryForList(
+        "SELECT * FROM app.processing_results WHERE topic=? AND partition_id=? AND record_offset=?",
+        metadata.topic(),
+        metadata.partition(),
+        metadata.offset());
   }
 }

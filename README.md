@@ -112,8 +112,105 @@ instancia sin confirmar el ER fallido ni saltar al siguiente. Si esa instancia
 tenía ambas particiones, ambas se detienen. Tras resolver una falla transitoria,
 reiniciar la aplicación retoma desde el offset pendiente. Un ER inválido vuelve
 a fallar al reiniciar: F-06 incorporará cuarentena y recuperación ordenada.
-F-03/F-05 cubrirán resultados por offset y más fronteras de caída/rebalanceo.
-F-02 todavía no publica settlements.
+F-03 incorpora resultados por posición; F-05 cubrirá más fronteras de caída y
+rebalanceo. Todavía no se publican settlements.
+
+### Resultados persistidos de F-03
+
+`app.processing_results` conserva un resultado por `(topic, partition_id,
+record_offset)`. `APPLIED` significa que ese registro aplicó el ER; `DUPLICATE`
+significa que el ER ya existía con contenido equivalente. Cada fila guarda su
+identidad, referencia al ledger y snapshot de estado, cantidades y contador.
+Resultado, estado, contador y ledger se confirman en la misma transacción SQL.
+
+Reentregar la **misma posición** devuelve el resultado original, incluso si fue
+`APPLIED` y la orden avanzó después. Republicar el mismo JSON crea **otro offset**
+y un resultado `DUPLICATE`; no incrementa contador ni ledger. La comparación
+JSONB incluye los campos adicionales. Un mismo identificador con otro contenido
+sigue siendo un error. Los errores no crean resultados exitosos: ausencia de
+fila no distingue entre registro no intentado y fallo.
+
+Para actualizar desde F-02, detener ambas aplicaciones y después reconstruirlas:
+
+```sh
+docker compose stop app-1 app-2
+docker compose up -d --build --wait app-1 app-2
+```
+
+Flyway aplica V2 sin borrar datos ni editar V1. Los ER históricos no tienen
+posición registrada, por lo que no se hace backfill ni se resetean offsets. Si
+uno aplicado en F-02 se reentrega sin resultado conocido, se registra `DUPLICATE`
+por su identidad de negocio. No mezclar consumidores F-02/F-03 durante el despliegue.
+
+### Prueba manual de F-03 en PowerShell
+
+Con el entorno actualizado, generar un ID nuevo y publicar `NEW`, `FILLED` y dos
+republicaciones. Estos comandos usan el productor Kafka y psql de los contenedores;
+no requieren Java ni herramientas de base instaladas en el host.
+
+```powershell
+$manualOrder = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$newEr = [ordered]@{
+  fixId = 1; numericOrderId = $manualOrder; status = 'NEW'
+  nominalAmounts = 10; accumulativeNominalAmount = 0; leavesNominalAmount = 10
+  transactionTime = '2026-07-20T18:08:52.129'; ticker = 'VSCPC'
+} | ConvertTo-Json -Compress
+$filledEr = [ordered]@{
+  fixId = 2; numericOrderId = $manualOrder; status = 'FILLED'
+  nominalAmounts = 10; accumulativeNominalAmount = 10; leavesNominalAmount = 0
+  transactionTime = '2026-07-20T18:08:53.129'; ticker = 'VSCPC'
+} | ConvertTo-Json -Compress
+@("$manualOrder|$newEr", "$manualOrder|$filledEr",
+  "$manualOrder|$filledEr", "$manualOrder|$newEr") |
+  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh `
+    --bootstrap-server localhost:29092 --topic execution-reports `
+    --property parse.key=true --property 'key.separator=|'
+$manualOrder
+```
+
+El consumo es asíncrono. Repetir las consultas hasta observar las cuatro filas:
+
+```powershell
+Invoke-RestMethod "http://localhost:8081/orders/$manualOrder" | ConvertTo-Json -Depth 8
+Invoke-RestMethod "http://localhost:8082/orders/$manualOrder" | ConvertTo-Json -Depth 8
+docker compose exec -T postgres psql -U orders -d orders -c "SELECT topic, partition_id, record_offset, outcome, fix_id, ledger_id, status, applied_execution_count FROM app.processing_results WHERE numeric_order_id=$manualOrder ORDER BY topic, partition_id, record_offset;"
+```
+
+Ambas consultas HTTP deben mostrar `FILLED`, contador **2** y **2** entradas de
+ledger. En SQL se esperan estas filas, en offsets distintos de una misma partición:
+
+| ER enviado | Resultado | Snapshot | Contador | Referencia |
+| --- | --- | --- | --- | --- |
+| NEW | APPLIED | NEW | 1 | Ledger de NEW |
+| FILLED | APPLIED | FILLED | 2 | Ledger de FILLED |
+| FILLED repetido | DUPLICATE | FILLED | 2 | Mismo ledger de FILLED |
+| NEW repetido tras terminar | DUPLICATE | FILLED | 2 | Mismo ledger de NEW |
+
+Para comprobar persistencia, reiniciar y republicar el terminal:
+
+```powershell
+docker compose restart app-1 app-2
+"$manualOrder|$filledEr" | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:29092 --topic execution-reports --property parse.key=true --property 'key.separator=|'
+```
+
+Al reanudar, SQL debe tener una quinta fila `DUPLICATE`; HTTP conserva contador
+2 y dos entradas de ledger. Los datos quedan disponibles para inspección. Si se
+cambiaron las credenciales de Compose, ajustar `-U` y `-d` en las consultas.
+
+Esta prueba manual republica ER y comprueba persistencia; no fuerza una reentrega
+del mismo offset. Para verificar esa frontera sin modificar offsets del entorno,
+ejecutar las pruebas aisladas con Docker y JDK 25:
+
+```powershell
+.\mvnw.cmd verify '-Dit.test=ProcessingResultsIT,ProcessingResultsSchemaIT,ExecutionReportKafkaIT'
+```
+
+`recoversCommittedResultWhenOffsetCommitFailsBeforeReachingKafka` falla una
+confirmación antes de enviarla al broker, después de confirmar SQL, y comprueba
+reentrega, resultado inmutable y sucesor pendiente hasta recuperar. Usa inyección
+de fallo exclusiva de test; no demuestra kill de proceso ni rebalanceo durante
+escritura (F-05). La suite también verifica rollback y concurrencia SQL.
+
 
 ### Consultar una orden
 
