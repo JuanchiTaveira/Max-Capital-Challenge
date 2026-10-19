@@ -60,7 +60,7 @@ En PowerShell usá `.\mvnw.cmd`; en Linux/macOS, `./mvnw`.
 - Build y pruebas completas: `.\mvnw.cmd verify` (requiere Docker para Testcontainers).
 - Ejecutar entorno: `docker compose up --build`.
 - Smoke de dos instancias, fallas y persistencia: `pwsh -File scripts/verify-f01.ps1`.
-- Smoke de órdenes, duplicados y consulta en dos instancias: `pwsh -File scripts/verify-f02.ps1`.
+- Smoke portable de órdenes, duplicados y consulta: `docker compose --profile tools run --build --rm verify-f02`.
 - Validar specs: `openspec validate --all --strict`.
 
 Spotless es la autoridad de formato Java: Google Style, dos espacios e imports

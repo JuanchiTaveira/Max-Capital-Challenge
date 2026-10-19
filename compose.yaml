@@ -96,6 +96,27 @@ services:
     ports:
       - "127.0.0.1:8082:8080"
 
+  verify-f02:
+    profiles: ["tools"]
+    image: max-capital-challenge-smoke:0.1.0-SNAPSHOT
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.smoke
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    depends_on:
+      app-1:
+        condition: service_healthy
+      app-2:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${SMOKE_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+
 volumes:
   postgres-data:
   kafka-data:

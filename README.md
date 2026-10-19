@@ -28,7 +28,10 @@ el primer build y puertos 8081, 8082, 9092 y 15432 disponibles. Reservar al meno
 4 GB de RAM para Docker. Java y Maven del host no son necesarios para Compose.
 
 Para desarrollar y ejecutar Testcontainers: JDK 25, Docker y Maven Wrapper incluido.
-Para el smoke automatizado: PowerShell 7 (`pwsh`). OpenSpec 1.14.1 requiere Node.js.
+El smoke de órdenes F-02 sólo requiere Docker y Compose, igual que el entorno:
+no necesita PowerShell 7, Python, Java ni Maven instalados en el host.
+El smoke de infraestructura F-01, opcional para desarrollo, requiere PowerShell 7
+(`pwsh`). OpenSpec 1.14.1 requiere Node.js.
 
 | Componente | Versión |
 | --- | --- |
@@ -148,6 +151,53 @@ tener huecos). `report` conserva todos los campos del ER recibido:
 La consulta SQL única lee estado y ledger desde el mismo snapshot confirmado;
 el array se ordena por `ledgerId`, no por `transactionTime`.
 
+### Emitir ER de prueba: órdenes intercaladas y duplicados
+
+Desde la raíz del repositorio, el mismo comando funciona en Windows (PowerShell
+incluido o CMD), Linux y macOS, con Docker activo en modo contenedores Linux:
+
+```sh
+docker compose --profile tools run --build --rm verify-f02
+```
+
+El comando construye y levanta el entorno si hace falta, espera ambas aplicaciones
+saludables y ejecuta la verificación dentro de un contenedor temporal. Publica dos
+órdenes intercaladas en distintas particiones: una termina FILLED con cuatro ER
+aplicados y otra CANCELLED con tres. Repite ambos terminales y comprueba que los
+duplicados no aumenten el contador ni el ledger. Consulta ambas instancias,
+reinicia las dos aplicaciones, reenvía los terminales y verifica que el estado y el
+ledger completos sigan iguales. Espera offsets confirmados con lag cero.
+
+Al terminar muestra `F-02 OK`, los IDs generados y las URLs de consulta en 8081/8082.
+Un error termina con código distinto de cero y diagnóstico; no hace falta interpretar
+los logs para decidir si pasó. El entorno queda levantado y conserva volúmenes y
+órdenes de prueba con IDs aislados para inspección. Para repetir sin reconstruir:
+
+```sh
+docker compose --profile tools run --rm verify-f02
+```
+
+El perfil `tools` sólo se activa al pedirlo. El contenedor usa el socket Docker
+para ejecutar el productor Kafka y reiniciar las aplicaciones identificadas por
+las etiquetas del proyecto Compose. Ese acceso permite controlar el motor: es una
+herramienta local de demostración. No monta el repositorio ni publica puertos.
+En Docker rootless, configurar `SMOKE_DOCKER_SOCKET` con la ruta del socket del
+motor; se usa `/var/run/docker.sock` por defecto. Este comando requiere un socket
+Linux accesible desde el motor y no configura acceso a un Docker remoto.
+
+También se conserva el acceso opcional desde Windows PowerShell 5.1 o PowerShell 7,
+sin invocar `pwsh`:
+
+```powershell
+powershell -NoProfile -File scripts/verify-f02.ps1
+powershell -NoProfile -File scripts/verify-f02.ps1 -SkipBuild
+```
+
+**Límite actual:** el smoke reinicia ambas instancias después de consumir el lote.
+No verifica una caída de una sola instancia durante el procesamiento ni las fronteras
+de commit SQL/Kafka; esos escenarios siguen pendientes en F-05. La portabilidad de
+este smoke tampoco completa por sí sola la entrega reproducible de F-07.
+
 ### Comandos de verificación
 
 En PowerShell:
@@ -157,11 +207,12 @@ En PowerShell:
 .\mvnw.cmd spotless:check
 .\mvnw.cmd verify
 pwsh -File scripts/verify-f01.ps1
-pwsh -File scripts/verify-f02.ps1
+docker compose --profile tools run --build --rm verify-f02
 ```
 
-En Linux/macOS, reemplazar `.\mvnw.cmd` por `./mvnw`. El script smoke también
-funciona con PowerShell 7 en Linux/macOS. La suite Maven usa JUnit y Testcontainers;
+En Linux/macOS, reemplazar `.\mvnw.cmd` por `./mvnw`. El smoke F-02 usa el mismo
+comando Compose en las tres plataformas. F-01 usa PowerShell 7 también en Linux/macOS.
+La suite Maven usa JUnit y Testcontainers;
 falla si Docker no está disponible. No hay Maven global requerido.
 
 Spotless aplica Google Style a Java: dos espacios, imports ordenados y sin uso
@@ -169,12 +220,10 @@ eliminados, UTF-8 y LF. `validate` comprueba formato sin editar. `apply` corrige
 fuentes. El build de imagen omite tests, pero mantiene ese check; no reemplaza
 `verify` ni el smoke.
 
-El smoke detiene y recrea contenedores del proyecto. Ejecutarlo sobre el entorno
-local de demostración. Usa datos aislados y los limpia; conserva los volúmenes.
-El smoke F-02 publica órdenes en ambas particiones, valida estado y ledger desde
-8081/8082, reinicia las aplicaciones y reenvía terminales. Espera offsets
-confirmados con lag cero; conserva sus órdenes con IDs aislados para inspección.
-`-SkipBuild` permite usar una imagen ya construida.
+Los smokes detienen o recrean contenedores del proyecto. Ejecutarlos sobre el entorno
+local de demostración, de a uno. F-01 limpia sus marcadores aislados y conserva los
+volúmenes; F-02 conserva también sus órdenes. `-SkipBuild` permite usar imágenes
+ya construidas en los lanzadores PowerShell.
 
 ## Persistencia y diagnóstico
 
@@ -209,6 +258,10 @@ sincronizadas y el change está archivado.
 [Evidencia de F-02](openspec/changes/archive/2026-10-18-f02-order-processing-and-query/verification.md):
 cinco pruebas unitarias y once de integración (incluidas las tres de F-01), más
 el smoke de dos instancias con secuencia, duplicados y persistencia tras reinicio.
+
+[Evidencia del smoke F-02 portable](openspec/changes/archive/2026-10-19-portable-f02-smoke/verification.md):
+comando Compose y lanzador Windows PowerShell 5.1 verificados con Docker Desktop
+en Windows; errores de acceso al motor y selección de proyecto comprobados.
 
 Kafka usa un solo broker: el entorno verifica caídas de aplicaciones y reinicios,
 no supervivencia a pérdida física del volumen. La presencia de transacciones Kafka
