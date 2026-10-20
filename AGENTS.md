@@ -9,7 +9,7 @@ al completarla, informá la evidencia y detenete antes de comenzar la siguiente.
 
 ## Fuentes y decisiones
 
-- El enunciado está disponible en [challenge-arch-max-capital..pdf](challenge-arch-max-capital..pdf),
+- El enunciado está disponible en [challenge-arch-max-capital..pdf](challenge-arch-max-capital.pdf),
   en la raíz del repositorio. Consultalo para el formato de ER y los requisitos.
 - Consultá README.md para ejecución, estado y comandos.
 - Consultá y actualizá DECISIONS.md con las decisiones importantes del núcleo,

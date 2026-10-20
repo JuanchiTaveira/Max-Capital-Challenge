@@ -1,7 +1,7 @@
 # Max Capital — challenge backend
 
 Servicio de procesamiento de ExecutionReports desarrollado por features con OpenSpec.
-El enunciado está en [challenge-arch-max-capital..pdf](challenge-arch-max-capital..pdf),
+El enunciado está en [challenge-arch-max-capital..pdf](challenge-arch-max-capital.pdf),
 en la raíz del repositorio.
 F-01 aporta infraestructura y herramientas; F-02 procesa ER en secuencia por orden,
 persiste estado y ledger y los expone por HTTP desde las dos instancias. F-03

@@ -1,7 +1,7 @@
 # Decisiones de diseño
 
 Este documento justifica las decisiones que resuelven los problemas del
-[enunciado](challenge-arch-max-capital..pdf), sus supuestos y sus costos. El README
+[enunciado](challenge-arch-max-capital.pdf), sus supuestos y sus costos. El README
 indica el estado de las features; los comandos y detalles operativos están allí y en
 OpenSpec. Las propuestas pendientes se distinguen del comportamiento implementado y
 de la evidencia disponible.
