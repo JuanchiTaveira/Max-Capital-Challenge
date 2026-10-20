@@ -12,9 +12,9 @@ conserva el resultado de cada posición Kafka resuelta para recuperarlo en reent
 Ejecutar los comandos desde la raíz del repositorio, con Docker activo:
 
 1. [Levantar el entorno](#ejecutar): `docker compose up --build`.
-2. Abrir [la consola de evaluación](http://localhost:8083), elegir modo **Automático** y pulsar **Ejecutar disponibles**. Cada paso muestra lo esperado, lo observado y su evidencia. Los escenarios pendientes se informan por separado.
-3. Usar **Ver orden** en la ejecución para inspeccionar estado, cantidades y ledger. En **Envíos y posiciones**, pulsar **Inspeccionar** para ver el JSON, la posición Kafka y su resultado SQL histórico. **Republicar exactamente** permite comprobar DUPLICATE.
-4. En **Mensajes**, probar el editor con **Nuevo ejemplo NEW**, publicar y esperar APPLIED; luego elegir **Ejemplo FILLED para esta key** y publicar. En modo **Paso a paso**, usar **Continuar paso**; recargar conserva el avance por URL mientras la consola siga ejecutándose.
+2. Abrir [la consola de evaluación](http://localhost:8083). Empieza por **Dos órdenes en paralelo**: leer **Qué demuestra**, **Qué vamos a hacer** y **Qué debería pasar**; elegir **Automático** y pulsar **Ejecutar escenario**.
+3. Leer la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**, sin abrir JSON. **Ir al siguiente escenario** sólo lo selecciona; no publica nada. **Ejecutar todos** recorre los cinco y permite consultar cada resultado por separado. Los tres pendientes quedan aparte.
+4. En modo **Paso a paso**, leer qué hará **Continuar paso** antes de pulsarlo; recargar conserva la ejecución y el escenario seleccionado por URL mientras la consola siga ejecutándose. **Evidencia técnica** contiene posiciones, snapshots y enlaces para inspeccionar órdenes, ledger y mensajes. En **Mensajes**, el editor permite publicar un NEW y luego un FILLED para la misma key, o republicar exactamente un registro.
 5. En **Sistema**, observar salud, consumo, asignaciones y offsets; detener/iniciar o terminar abruptamente una aplicación desde sus controles. Las caídas entre commits, settlement y recuperación de mensajes permanentes continúan pendientes de F-04 a F-06.
 
 El evaluador sólo necesita Docker y un navegador. La verificación portable por API
@@ -154,7 +154,7 @@ transaccional: no equivale necesariamente a cantidad de ER pendientes.
 El catálogo ofrece órdenes intercaladas, snapshots con reloj no creciente,
 duplicados terminales/tardíos, persistencia después de reiniciar y visibilidad de
 transacciones confirmadas/abortadas. Cada escenario informa precondiciones,
-resultado esperado y verificaciones reales; `Ejecutar disponibles` recorre sólo
+resultado esperado y verificaciones reales; **Ejecutar todos** recorre sólo
 esos cinco y deja explícitos los pendientes de F-04/F-05/F-06. La consola no emite
 poison intencional ni certifica settlement o caídas entre commits.
 
@@ -168,6 +168,13 @@ El historial de hasta 50 ejecuciones vive en memoria: reiniciar la consola pierd
 esa coordinación, aunque las órdenes y posiciones sigan disponibles para inspección.
 Un poison previo o consumidores detenidos pueden impedir cumplir precondiciones;
 se informa el diagnóstico sin saltar registros ni resetear el grupo.
+
+La vista guiada comienza individualmente y separa cada resultado del lote. Las
+comparaciones provienen de comprobaciones del servidor y conservan sus observaciones
+capturadas; abrir la orden actual no reemplaza un snapshot histórico. Las filas sin
+observación, incompletas o fallidas quedan distinguidas de las verificadas. Un aborto
+transaccional previsto se explica como parte de la prueba. Las rutas de consola
+mantienen sus campos anteriores y agregan guía y resultados agrupados, sin migraciones.
 
 ## Inspeccionar la base de datos y Kafka
 

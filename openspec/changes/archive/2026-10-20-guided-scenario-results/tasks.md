@@ -9,13 +9,13 @@
 ## 2. Recorrido del evaluador
 
 - [x] 2.1 Implementar selector, explicación previa y pendientes separados, ejecución individual inicial y siguiente sin envíos; verificar en navegador navegación y selección.
-- [ ] 2.2 Mostrar conclusión, tabla esperado/observado y pasos por escenario, controles manuales y evidencia desplegable; verificar cinco resultados, lote, recarga, cancelación y fallo de precondiciones sin necesitar JSON.
-- [ ] 2.3 Aplicar presentación responsive y accesible preservando otras vistas; verificar teclado, foco, pausa, ancho 375 px y enlaces a órdenes/mensajes; actualizar guía README y comprobar recorrido.
+- [x] 2.2 Mostrar conclusión, tabla esperado/observado y pasos por escenario, controles manuales y evidencia desplegable; verificar cinco resultados, lote, recarga, cancelación y fallo de precondiciones sin necesitar JSON.
+- [x] 2.3 Aplicar presentación responsive y accesible preservando otras vistas; verificar teclado, foco, pausa, ancho 375 px y enlaces a órdenes/mensajes; actualizar guía README y comprobar recorrido.
 
 ## 3. Verificación integrada
 
-- [ ] 3.1 Ejecutar spotless:apply, spotless:check y verify con Docker; comprobar éxito sin omisiones y registrar evidencia por criterio en verification.md.
-- [ ] 3.2 Ejecutar smoke de consola real, comprobar compatibilidad, restauración y conservación de datos; validar openspec --all --strict y git diff --check, revisar documentación y commits locales.
+- [x] 3.1 Ejecutar spotless:apply, spotless:check y verify con Docker; comprobar éxito sin omisiones y registrar evidencia por criterio en verification.md.
+- [x] 3.2 Ejecutar smoke de consola real, comprobar compatibilidad, restauración y conservación de datos; validar openspec --all --strict y git diff --check, revisar documentación y commits locales.
 
 ## Workflow follow-up
 

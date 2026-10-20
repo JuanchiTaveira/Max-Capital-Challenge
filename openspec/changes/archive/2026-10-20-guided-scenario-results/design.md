@@ -20,6 +20,8 @@ migraciones, retención durable de runs o instalación de dependencias.
 - Registrar verificaciones al comprobar datos, no resumir JSON en el navegador.
   Cada check tiene id,label,expected,observed,status,observedAt,stepId y references.
   Los checks previstos se declaran antes de observar; quedan NOT_OBSERVED sin datos.
+  observedAt aparece sólo al registrar una observación y stepId al observar o
+  diagnosticar, sin inventar metadata para comprobaciones todavía no intentadas.
   Una condición transitoria queda WAITING durante reintentos, FAILED al terminar
   en fallo, e INCOMPLETE si se cancela. PASSED exige datos efectivamente observados.
 - Resultados se guardan en memoria del run, con snapshots ya consultados y cadenas
@@ -34,6 +36,8 @@ migraciones, retención durable de runs o instalación de dependencias.
 - Selección inicial interleaved-orders; siguientes en orden de catálogo sin envíos
   implícitos. Hash #scenarios/{runId}/{scenarioId} conserva selección en recarga.
   El lote permite inspeccionar cualquiera mientras el progreso global sigue visible.
+  El botón Ejecutar todos corresponde a la operación `available`, anteriormente
+  presentada como Ejecutar disponibles; el contrato de ejecución no cambia.
 
 ## Risks / Trade-offs
 
