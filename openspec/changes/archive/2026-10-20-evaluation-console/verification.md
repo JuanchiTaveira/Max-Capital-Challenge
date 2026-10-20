@@ -95,6 +95,10 @@ se mostró como texto. No se usó `Number` para representar esos identificadores
 
 El historial de runs es volátil y acotado a 50; reconstruir/reiniciar la consola
 puede perder sus IDs de coordinación. Kafka y SQL conservaron la evidencia.
+En la revisión final se corrigió la limpieza de un aviso de lectura fallida al
+navegar a otra ejecución válida. Se reconstruyó la consola y se comprobó desde
+el navegador el paso de historial perdido a run aprobado
+`7be10c93-0120-4d82-8f7c-b36ecbf8fc09`, sin conservar el error anterior.
 El smoke preservó las 26 órdenes encontradas al iniciar. Además, se compararon
 antes/después las 13 órdenes existentes al comenzar este trabajo, filtrando sus
 IDs originales. Hashes sin cambios:

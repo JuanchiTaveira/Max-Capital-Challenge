@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 const views = ['scenarios', 'messages', 'orders', 'system'];
 const state = {
-  view: 'scenarios', runId: null, run: null, active: null, actionBusy: false,
+  view: 'scenarios', runId: null, run: null, runReadFailed: false, active: null, actionBusy: false,
   refreshing: false, paused: false, catalog: null, system: null,
   messageCursor: '0', messageNext: null, messageEnd: '0', records: [], selected: null,
   orderCursor: null, orderNext: null, orderId: null, order: null, highlight: null,
@@ -148,8 +148,11 @@ function renderRun(run) {
 }
 async function refreshRun() {
   if (!state.runId) return;
-  try { const run = await api('/runs/' + encodeURIComponent(state.runId)); renderRun(run); }
-  catch (error) { notice('scenario-notice', error.message, true); }
+  try {
+    const run = await api('/runs/' + encodeURIComponent(state.runId)); renderRun(run);
+    if (state.runReadFailed) notice('scenario-notice', '');
+    state.runReadFailed = false;
+  } catch (error) { state.runReadFailed = true; notice('scenario-notice', error.message, true); }
 }
 
 async function loadMessages() {
