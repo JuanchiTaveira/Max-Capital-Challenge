@@ -42,6 +42,12 @@ public class ConsoleQueries {
     return result;
   }
 
+  public boolean exists(long id) {
+    return Boolean.TRUE.equals(
+        jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM app.orders WHERE numeric_order_id=?)", Boolean.class, id));
+  }
+
   public Map<String, Object> order(String id) {
     var details =
         orders
