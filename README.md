@@ -7,6 +7,20 @@ F-01 aporta infraestructura y herramientas; F-02 procesa ER en secuencia por ord
 persiste estado y ledger y los expone por HTTP desde las dos instancias. F-03
 conserva el resultado de cada posición Kafka resuelta para recuperarlo en reentregas.
 
+## Guía rápida para evaluar
+
+Ejecutar los comandos desde la raíz del repositorio, con Docker activo:
+
+1. [Levantar el entorno](#ejecutar): `docker compose up --build`.
+2. [Generar órdenes y verificar ambas instancias](#emitir-er-de-prueba-órdenes-intercaladas-y-duplicados): `docker compose --profile tools run --build --rm verify-f02`. Al terminar imprime los IDs creados y sus URLs; conserva los datos para inspección.
+3. [Consultar el estado actual por HTTP](#consultar-una-orden): abrir `http://localhost:8081/orders/{numericOrderId}` con uno de esos IDs. El puerto `8082` permite consultar desde la otra instancia.
+4. [Ver tablas en DBeaver](#conectar-postgresql-desde-dbeaver) y [consultar estado, ledger y resultados con SQL](#consultar-las-tablas-con-sql).
+5. [Leer los mensajes de Kafka](#ver-los-mensajes-de-kafka) con key, partición y offset.
+
+Para comprobar paso a paso la idempotencia y persistencia, seguir la
+[prueba manual de F-03](#prueba-manual-de-f-03-en-powershell). El entorno no incluye
+interfaces web de Kafka ni PostgreSQL; DBeaver es un cliente externo opcional.
+
 ## Features
 
 Esta tabla es la única fuente del estado de implementación.
@@ -74,6 +88,118 @@ La base, usuario y contraseña de demostración son `orders`. Son valores locale
 de este ejercicio. Se pueden cambiar con `POSTGRES_DB`, `POSTGRES_USER` y
 `POSTGRES_PASSWORD`. Las aplicaciones locales aceptan `DB_URL`, `DB_USER`,
 `DB_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS`, `INSTANCE_ID` y `SERVER_PORT`.
+
+## Inspeccionar la base de datos y Kafka
+
+### Conectar PostgreSQL desde DBeaver
+
+Con el entorno levantado, crear una conexión de tipo **PostgreSQL** en DBeaver:
+
+| Campo | Valor de demostración |
+| --- | --- |
+| Host | `localhost` |
+| Puerto | `15432` |
+| Base de datos | `orders` |
+| Usuario | `orders` |
+| Contraseña | `orders` |
+
+Seleccionar **Probar conexión** y aceptar la descarga del driver PostgreSQL si
+DBeaver la solicita. Guardar la conexión y expandir **orders → Esquemas → app →
+Tablas**. Para abrir los registros: clic derecho en la tabla → **Ver datos →
+Todas las filas**. Si las tablas no aparecen tras actualizar la aplicación,
+refrescar el esquema `app`.
+
+| Tabla | Qué permite inspeccionar |
+| --- | --- |
+| `app.orders` | Estado y cantidades actuales; `applied_execution_count` cuenta ER aplicados, incluidos NEW y terminales, sin contar duplicados. No es la cantidad de títulos operados. |
+| `app.execution_report_ledger` | Historial de ER efectivamente aplicados, con reporte completo y `ledger_id` autoincremental. Un duplicado no agrega entradas. |
+| `app.processing_results` | Resultado `APPLIED`/`DUPLICATE` y snapshot por posición Kafka. Una republicación puede agregar un resultado sin agregar ledger. |
+| `app.flyway_schema_history` | Migraciones de base de datos ejecutadas. |
+
+Los valores de conexión corresponden a Compose desde el host. Si se modificaron
+`POSTGRES_DB`, `POSTGRES_USER` o `POSTGRES_PASSWORD`, usar los valores configurados.
+Una conexión rechazada puede indicar que PostgreSQL no está levantado: comprobar
+`docker compose ps` y, si hace falta, ejecutar `docker compose up -d postgres`.
+Las tablas de aplicación se crean al arrancar una instancia de la aplicación y
+ejecutar sus migraciones; levantar sólo PostgreSQL en un entorno nuevo no las crea.
+
+### Consultar las tablas con SQL
+
+En el editor SQL de DBeaver, obtener primero IDs que existan en esa base:
+
+```sql
+SELECT numeric_order_id, status, applied_execution_count,
+       nominal_amounts, accumulative_nominal_amount, leaves_nominal_amount
+FROM app.orders
+ORDER BY numeric_order_id DESC
+LIMIT 20;
+```
+
+También se pueden usar los IDs impresos por el smoke. En las consultas siguientes,
+reemplazar `13144742` por uno de esos IDs; el valor del ejemplo no se precarga:
+
+```sql
+-- Estado actual de la orden.
+SELECT * FROM app.orders WHERE numeric_order_id = 13144742;
+
+-- ER aplicados, en orden de inserción.
+SELECT ledger_id, fix_id, report
+FROM app.execution_report_ledger
+WHERE numeric_order_id = 13144742
+ORDER BY ledger_id;
+
+-- Resultado de cada registro Kafka y snapshot al resolverlo.
+SELECT topic, partition_id, record_offset, outcome, fix_id, ledger_id,
+       status, applied_execution_count
+FROM app.processing_results
+WHERE numeric_order_id = 13144742
+ORDER BY topic, partition_id, record_offset;
+```
+
+La orden muestra el presente; el ledger explica cómo llegó a ese estado; los
+resultados conservan qué ocurrió con cada posición del flujo. Un resultado
+histórico puede tener otro snapshot que el estado actual. Los registros aplicados
+antes de F-03 pueden tener ledger sin resultados por posición.
+
+Sin DBeaver, las mismas consultas se pueden ejecutar con el cliente del contenedor:
+
+```sh
+docker compose exec postgres psql -U orders -d orders
+```
+
+Dentro de `psql`, `\dt app.*` lista las tablas y `\q` sale del cliente.
+
+### Ver los mensajes de Kafka
+
+Listar los topics desde la raíz del repositorio:
+
+```sh
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list
+```
+
+Leer los ER conservados desde el comienzo y seguir viendo nuevos mensajes:
+
+```sh
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:29092 --topic execution-reports --from-beginning --isolation-level read_committed --formatter-property print.key=true --formatter-property print.partition=true --formatter-property print.offset=true
+```
+
+La salida muestra **key (`numericOrderId`), partición, offset y JSON del ER**.
+`Ctrl+C` detiene la visualización. Este comando usa un consumidor independiente:
+no elimina los mensajes ni cambia los offsets del grupo de las aplicaciones.
+No agregar `--group max-capital-orders-v1`, porque ese grupo corresponde al
+procesamiento de órdenes. `read_committed` excluye transacciones productoras
+abortadas.
+
+Para una lectura acotada, agregar `--max-messages 10 --timeout-ms 10000` al
+comando: termina al leer diez mensajes o al agotar diez segundos sin recibir
+mensajes; el timeout puede terminar con código distinto de cero. Las
+republicaciones aparecen como registros distintos, aunque la aplicación las haya
+clasificado como `DUPLICATE`.
+
+La dirección `localhost:29092` se usa **dentro del contenedor Kafka**. Para conectar
+una herramienta desde el host, usar `localhost:9092`. No hay una Kafka UI incluida
+en este Compose. Los comandos de consumo permiten inspeccionar los ER; el estado
+actual de cada orden se consulta por HTTP o en `app.orders`.
 
 ## Formato y pruebas
 
