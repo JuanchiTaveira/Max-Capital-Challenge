@@ -212,7 +212,7 @@ public class ScenarioSteps {
       int fix = index + 1, amount = new int[] {0, 3, 7, 10}[index];
       String status = index == 0 ? "NEW" : index == 3 ? "FILLED" : "PARTIALLY_FILLED";
       run.step(
-          "Snapshot " + fix + ": " + status,
+          "Aplicar mensaje " + fix + ": acumulado " + amount,
           "Acumulado " + amount + ", restante " + (10 - amount) + ", contador " + fix,
           () -> {
             var record = emit(run, order, fix, status, amount, 10 - amount);
@@ -234,9 +234,9 @@ public class ScenarioSteps {
                   "clock",
                   "Acumulados observados "
                       + String.join(" → ", amounts)
-                      + "; horas de origen "
-                      + String.join(" → ", times)
-                      + ".",
+                      + (descending
+                          ? ". Se aplicaron en ese orden aunque las horas de origen retroceden."
+                          : ". Las horas de origen no siguieron la secuencia decreciente prevista."),
                   descending,
                   Map.of(
                       "orderId",
@@ -260,8 +260,8 @@ public class ScenarioSteps {
     long order = fresh(run, 1);
     var records = new ArrayList<ConsoleKafka.Record>();
     run.step(
-        "Publicar NEW",
-        "Una aplicación y contador uno",
+        "Crear la orden",
+        "Un mensaje aplicado crea la orden, con contador 1 y una entrada de historial",
         () -> {
           var record = emit(run, order, 1, "NEW", 0, 10);
           records.add(record);
@@ -269,7 +269,7 @@ public class ScenarioSteps {
           return Map.of("order", expectOrder(run, "new", order, "NEW", 0, 1));
         });
     run.step(
-        "Completar y republicar terminal",
+        "Completar la orden y repetir la finalización",
         "FILLED aplicado una vez y su republicación DUPLICATE",
         () -> {
           var terminal = emit(run, order, 2, "FILLED", 10, 0);
@@ -282,7 +282,7 @@ public class ScenarioSteps {
           return Map.of("order", expectOrder(run, "terminal", order, "FILLED", 10, 1, 2));
         });
     run.step(
-        "Republicar NEW después de FILLED",
+        "Repetir la creación después de completar la orden",
         "DUPLICATE con snapshot FILLED y referencia al ledger de NEW",
         () -> {
           var late = republish(run, records.getFirst());
@@ -340,7 +340,7 @@ public class ScenarioSteps {
     long order = fresh(run, 0);
     var records = new ArrayList<ConsoleKafka.Record>();
     run.step(
-        "Confirmar NEW",
+        "Confirmar la creación de la orden",
         "NEW visible y aplicado",
         () -> {
           var record =
@@ -352,7 +352,7 @@ public class ScenarioSteps {
               "transaction", "COMMITTED", "order", expectOrder(run, "new", order, "NEW", 0, 1));
         });
     run.step(
-        "Abortar parcial",
+        "Abortar la actualización parcial",
         "El envío tiene posición pero no es entrada read_committed",
         () -> {
           var record =
@@ -368,7 +368,7 @@ public class ScenarioSteps {
           return Map.of("transaction", "ABORTED", "position", record);
         });
     run.step(
-        "Confirmar sucesor y observar visibilidad",
+        "Confirmar la finalización y comprobar qué mensajes se ven",
         "Sólo NEW y FILLED aplicados; sin efectos del parcial abortado",
         () -> {
           var last =
@@ -534,9 +534,10 @@ public class ScenarioSteps {
         run.observe(
             checkId,
             rows.size()
-                + " resultados "
-                + outcome
-                + " observados en SQL para las posiciones y órdenes publicadas.",
+                + (outcome.equals("APPLIED")
+                    ? " mensajes aplicados (APPLIED)"
+                    : " mensajes reconocidos como duplicados (DUPLICATE), sin volver a aplicar")
+                + ", vinculados en SQL a las posiciones y órdenes publicadas.",
             true,
             Map.of("results", rows, "messages", records));
     } catch (RuntimeException ex) {
@@ -641,9 +642,13 @@ public class ScenarioSteps {
             .toPlainString()
         + ", "
         + actual.get("appliedExecutionCount")
-        + " ER aplicados y "
+        + ("1".equals(actual.get("appliedExecutionCount"))
+            ? " mensaje aplicado y "
+            : " mensajes aplicados y ")
         + ((List<?>) actual.get("ledger")).size()
-        + " entradas de historial.";
+        + (((List<?>) actual.get("ledger")).size() == 1
+            ? " entrada de historial."
+            : " entradas de historial.");
   }
 
   private static Map<String, Object> snapshot(Map<String, Object> observed) {

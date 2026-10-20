@@ -51,7 +51,7 @@ public class ScenarioCatalog {
             "F-02/F-03",
             "Observar la secuencia por orden en ambas particiones",
             ready,
-            "FILLED con 4 ER y CANCELLED con 3; estado y ledger consistentes en ambas instancias"),
+            "Orden A completada con 4 mensajes aplicados y 4 entradas de historial; orden B cancelada con 3. Ambas instancias devuelven los mismos datos."),
         new Entry(
             "quantity-snapshots",
             "Las cantidades acumuladas no se suman",
@@ -59,7 +59,7 @@ public class ScenarioCatalog {
             "F-02",
             "Comprobar acumulados sin sumarlos y secuencia independiente del reloj",
             ready,
-            "Acumulados 0, 3, 7 y 10; cuatro entradas de ledger"),
+            "Acumulados 0 → 3 → 7 → 10, sin sumarlos entre sí. La orden termina completada con 4 mensajes aplicados y 4 entradas de historial."),
         new Entry(
             "terminal-duplicates",
             "Los mensajes repetidos no duplican efectos",
@@ -67,7 +67,7 @@ public class ScenarioCatalog {
             "F-03",
             "Republicar FILLED y NEW después de completar una orden",
             ready,
-            "Dos APPLIED y dos DUPLICATE; contador y ledger permanecen en dos"),
+            "De 4 envíos, sólo 2 se aplican; los otros 2 se reconocen como duplicados. La orden completada conserva contador e historial en 2."),
         new Entry(
             "restart-persistence",
             "Los datos sobreviven al reinicio",
@@ -75,7 +75,7 @@ public class ScenarioCatalog {
             "F-02/F-03",
             "Reiniciar ambas instancias después de consumir y republicar terminales",
             ready,
-            "Estado y ledger completos iguales; nuevos resultados DUPLICATE. No prueba caídas entre commits"),
+            "Las dos órdenes conservan estado e historial completos. Los terminales repetidos son duplicados. El reinicio sucede después del lote, no entre commits."),
         new Entry(
             "committed-input-only",
             "Las transacciones abortadas no afectan las órdenes",
@@ -83,7 +83,7 @@ public class ScenarioCatalog {
             "F-02/F-03",
             "Observar qué entrada ve un consumidor read_committed",
             ready,
-            "NEW y FILLED aplicados; parcial abortado sin efecto SQL"),
+            "Sólo creación y finalización son visibles y se aplican: 2 entradas de historial. El parcial abortado no tiene resultado ni efecto SQL. No comprueba settlement."),
         new Entry(
             "settlement-once",
             "Settlement único",

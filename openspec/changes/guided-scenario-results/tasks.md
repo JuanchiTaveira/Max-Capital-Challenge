@@ -8,7 +8,7 @@
 
 ## 2. Recorrido del evaluador
 
-- [ ] 2.1 Implementar selector, explicación previa y pendientes separados, ejecución individual inicial y siguiente sin envíos; verificar en navegador navegación y selección.
+- [x] 2.1 Implementar selector, explicación previa y pendientes separados, ejecución individual inicial y siguiente sin envíos; verificar en navegador navegación y selección.
 - [ ] 2.2 Mostrar conclusión, tabla esperado/observado y pasos por escenario, controles manuales y evidencia desplegable; verificar cinco resultados, lote, recarga, cancelación y fallo de precondiciones sin necesitar JSON.
 - [ ] 2.3 Aplicar presentación responsive y accesible preservando otras vistas; verificar teclado, foco, pausa, ancho 375 px y enlaces a órdenes/mensajes; actualizar guía README y comprobar recorrido.
 

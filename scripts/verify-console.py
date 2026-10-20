@@ -109,6 +109,14 @@ def main():
         time.sleep(1)
     require(run["passedScenarios"] == 5 and run["excludedPending"] == 3, str(run))
     require(all(step["status"] == "PASSED" for step in run["steps"]), "Hay pasos sin verificación")
+    require(len(run["scenarioResults"]) == 5, "Faltan resultados por escenario")
+    for scenario in run["scenarioResults"]:
+        require(scenario["status"] == "PASSED" and scenario["conclusion"], "Conclusión de escenario incompleta")
+        require(all(check["status"] == "PASSED" and check["observed"] and check["references"]
+                    for check in scenario["checks"]), "Faltan observaciones reales en un escenario")
+    steps_by_id = {step["id"]: step for step in run["steps"]}
+    require(all(steps_by_id[record["stepId"]]["scenarioId"] == record["scenarioId"]
+                for record in run["messages"]), "Hay mensajes asociados al escenario incorrecto")
     aborted = next(record for record in run["messages"] if record["transaction"] == "ABORTED")
     require(api(f"/results?topic={aborted['topic']}&partition={aborted['partition']}&offset={aborted['offset']}")["result"] is None,
             "El envío abortado tiene resultado SQL")

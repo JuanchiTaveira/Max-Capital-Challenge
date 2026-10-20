@@ -59,6 +59,42 @@ details { margin: 10px 0; padding: 10px 14px; background: var(--surface); border
 summary { cursor: pointer; min-height: 28px; font-weight: 600; }
 #run-steps { padding-left: 25px; }
 #run-orders { margin: 14px 0; }
+.scenario-workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 28px; align-items: start; }
+.scenario-selector { position: sticky; top: 16px; }
+.scenario-selector h3 { font-size: .95rem; color: var(--muted); margin: 0 0 12px; }
+.scenario-options { display: grid; gap: 8px; }
+.scenario-option { display: grid; grid-template-columns: 25px minmax(0, 1fr); column-gap: 10px; text-align: left; padding: 14px 12px; }
+.scenario-option[aria-pressed="true"] { border-color: var(--action); box-shadow: inset 3px 0 var(--action); background: #f4f8fd; }
+.scenario-number { color: var(--muted); grid-row: span 2; }
+.scenario-option-title { font-weight: 600; line-height: 1.35; }
+.scenario-option-status { font-size: .8rem; color: var(--muted); margin-top: 6px; }
+.scenario-content { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 26px; min-width: 0; }
+#scenario-title { font-size: 1.6rem; line-height: 1.25; margin: 0 0 24px; max-width: 30ch; }
+h4 { font-size: 1rem; line-height: 1.4; margin: 22px 0 8px; }
+#scenario-brief p, #scenario-outcome p, .planned-actions { max-width: 72ch; }
+.planned-actions { padding-left: 22px; }
+.planned-actions li { padding: 3px 0 7px 4px; }
+.expected-outcome { background: #f1f6fc; padding: 14px 16px; border-left: 3px solid var(--action); }
+.scenario-actions { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 20px; }
+.scenario-actions .help { margin-top: 10px; }
+.run-overview { background: var(--surface); border: 1px solid var(--line); padding: 18px 22px; border-radius: 5px; margin-bottom: 24px; }
+.run-overview h3 { margin-top: 0; }
+.run-overview .actions:has(button:not([hidden])) { margin-bottom: 12px; }
+.batch-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.batch-buttons button { text-align: left; font-size: .85rem; }
+.scenario-outcome { border-top: 2px solid var(--line); margin-top: 26px; padding-top: 4px; }
+.scenario-outcome.passed { border-top-color: var(--pass); }
+.scenario-outcome.failed { border-top-color: var(--fail); }
+.scenario-outcome h4 { font-size: 1.2rem; }
+.check-status { font-weight: 650; white-space: nowrap; }
+#scenario-checks td p { margin: 0 0 4px; }
+#scenario-checks td:first-child { font-weight: 600; min-width: 130px; }
+#scenario-checks th, #scenario-checks td { padding: 11px 12px; }
+#next-scenario { margin-top: 22px; border-color: var(--action); color: var(--action); }
+.pending-scenarios { margin-top: 36px; border-top: 1px solid var(--line); padding-top: 20px; }
+#pending-scenarios { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+.pending-entry { color: var(--muted); font-size: .9rem; }
+.pending-label { display: block; font-size: .8rem; margin: 6px 0; }
 .skip { position: absolute; left: 12px; top: -70px; background: var(--surface); padding: 12px; z-index: 2; }
 .skip:focus { top: 10px; }
 [hidden] { display: none !important; }
@@ -69,4 +105,15 @@ summary { cursor: pointer; min-height: 28px; font-weight: 600; }
   nav button { padding: 9px 13px; }
   .actions input { min-width: 160px; width: 100%; }
   td, th { padding: 9px 10px; }
+  .scenario-workspace { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .scenario-selector { position: static; }
+  .scenario-content { padding: 18px; }
+  #scenario-title { font-size: 1.35rem; }
+  #pending-scenarios { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  #scenario-checks thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  #scenario-checks table, #scenario-checks tbody { display: block; }
+  #scenario-checks tr { display: grid; grid-template-columns: minmax(0, 1fr); border-bottom: 1px solid var(--line); padding: 10px 0; }
+  #scenario-checks tr:last-child { border: 0; }
+  #scenario-checks td { display: block; border: 0; padding: 5px 12px; }
+  #scenario-checks td::before { content: attr(data-label); display: block; font-size: .8rem; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
 }
