@@ -1,7 +1,62 @@
 <!doctype html>
 <html lang="es">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Max Capital · Consola de evaluación</title>
-<main><h1>Consola de evaluación</h1><p>Max Capital · ExecutionReports</p></main>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Max Capital · Consola de evaluación</title>
+  <link rel="stylesheet" href="/assets/console.css">
+  <script type="module" src="/assets/console.js"></script>
+</head>
+<body>
+<a class="skip" href="#content">Ir al contenido</a>
+<header>
+  <div><p class="brand">Max Capital</p><h1>Consola de evaluación</h1></div>
+  <div class="refresh"><button id="refresh" type="button">Actualizar ahora</button><button id="pause" type="button" aria-pressed="false">Pausar refresco</button></div>
+</header>
+<p id="summary" class="summary">Consultando el entorno…</p>
+<nav role="tablist" aria-label="Vistas de evaluación">
+  <button id="tab-scenarios" role="tab" aria-controls="scenarios" aria-selected="true" data-view="scenarios">Escenarios</button>
+  <button id="tab-messages" role="tab" aria-controls="messages" aria-selected="false" data-view="messages" tabindex="-1">Mensajes</button>
+  <button id="tab-orders" role="tab" aria-controls="orders" aria-selected="false" data-view="orders" tabindex="-1">Órdenes</button>
+  <button id="tab-system" role="tab" aria-controls="system" aria-selected="false" data-view="system" tabindex="-1">Sistema</button>
+</nav>
+<main id="content" tabindex="-1">
+  <section id="scenarios" role="tabpanel" aria-labelledby="tab-scenarios">
+    <div class="section-heading"><div><h2>Probar el procesamiento</h2><p>Ejecutá una prueba y seguí los mensajes, las órdenes y las verificaciones.</p></div>
+      <div class="actions"><label for="run-mode">Modo</label><select id="run-mode"><option value="automatic">Automático</option><option value="step">Paso a paso</option></select><button id="run-all" class="primary" data-manual-mutation="true">Ejecutar disponibles</button></div></div>
+    <p id="scenario-notice" class="notice" role="status"></p>
+    <section id="run-panel" class="detail" hidden>
+      <div class="section-heading"><div><h3>Ejecución seleccionada</h3><p id="run-id" class="mono"></p></div><div class="actions"><button id="next-step">Continuar paso</button><button id="cancel-run">Cancelar ejecución</button></div></div>
+      <p id="run-status" role="status"></p><p id="run-error" class="error" role="alert"></p>
+      <div id="run-orders" class="actions"></div><ol id="run-steps"></ol>
+      <details><summary>Envíos y posiciones de esta ejecución</summary><div id="run-messages" class="table-wrap"></div></details>
+    </section>
+    <div id="catalog" class="table-wrap"><p>Cargando escenarios…</p></div>
+    <p class="help">Las pruebas pendientes de F-04 a F-06 se muestran por separado y no se cuentan como aprobadas. Terminar una instancia manualmente no verifica una caída entre commits.</p>
+  </section>
+  <section id="messages" role="tabpanel" aria-labelledby="tab-messages" hidden>
+    <div class="section-heading"><div><h2>Mensajes del broker</h2><p>Lectura read_committed por partición. Los offsets pueden tener huecos legítimos.</p></div></div>
+    <div class="toolbar"><label for="topic">Topic</label><select id="topic"><option>execution-reports</option><option>settlements</option><option>execution-reports-rejected</option></select><label for="partition">Partición</label><select id="partition"><option>0</option><option>1</option></select><button id="message-first">Desde el comienzo</button><button id="message-last">Últimos registros</button><button id="message-next" disabled>Siguiente página</button></div>
+    <p id="message-notice" class="notice" role="status"></p>
+    <section id="message-detail" class="detail" hidden><h3>Registro seleccionado</h3><p id="record-position" class="mono"></p><div class="actions"><button id="record-order">Ver orden</button><button id="record-republish" data-manual-mutation="true">Republicar exactamente</button></div><pre id="record-payload"></pre><h3>Resultado de procesamiento</h3><p id="result-notice" role="status"></p><div id="record-result"></div></section>
+    <div id="message-table" class="table-wrap"></div>
+    <section class="detail"><h3>Publicar un ExecutionReport</h3><p class="help">Los errores conocidos se rechazan antes de publicar. La confirmación del broker y el resultado SQL se muestran por separado.</p>
+      <form id="publish-form"><label for="report-key">Key (numericOrderId)</label><input id="report-key" inputmode="numeric" required autocomplete="off"><label for="report-payload">JSON del ER</label><textarea id="report-payload" rows="11" required spellcheck="false"></textarea><div class="actions"><button type="button" id="example-new">Nuevo ejemplo NEW</button><button type="button" id="example-filled">Ejemplo FILLED para esta key</button><button type="submit" class="primary" data-manual-mutation="true">Publicar ER</button></div><p id="publish-notice" class="notice" role="status"></p></form>
+    </section>
+  </section>
+  <section id="orders" role="tabpanel" aria-labelledby="tab-orders" hidden>
+    <div class="section-heading"><div><h2>Órdenes persistidas</h2><p>Listado por ID descendente. El detalle muestra estado actual y ledger del mismo snapshot SQL.</p></div><form id="order-form" class="actions"><label for="order-id">numericOrderId</label><input id="order-id" inputmode="numeric" required autocomplete="off"><button class="primary">Consultar orden</button></form></div>
+    <p id="order-notice" class="notice" role="status"></p>
+    <section id="order-detail" class="detail" hidden><h3 id="order-title"></h3><div id="order-state"></div><h3>Ledger de ER aplicados</h3><p class="help">Ordenado por ledgerId. El contador incluye NEW y terminales; no es la cantidad de títulos operados.</p><div id="order-ledger"></div></section>
+    <div id="order-table" class="table-wrap"></div><div class="actions"><button id="order-first">Primera página</button><button id="order-next" disabled>Siguiente página de órdenes</button></div>
+  </section>
+  <section id="system" role="tabpanel" aria-labelledby="tab-system" hidden>
+    <div class="section-heading"><div><h2>Sistema y controles locales</h2><p>Salud HTTP, consumo y asignaciones se observan por separado.</p></div></div>
+    <p id="system-notice" class="notice" role="status"></p><p id="control-result" class="notice" role="status"></p><div id="service-table" class="table-wrap"></div>
+    <h3>Grupo y progreso Kafka</h3><p class="help">Las asignaciones son actuales, no autoría histórica. El lag cuenta posiciones, incluidos posibles registros de control transaccional.</p><div id="group-table" class="table-wrap"></div><div id="offset-table" class="table-wrap"></div>
+    <section class="detail"><h3>Diagnóstico reciente</h3><div class="toolbar"><label for="log-service">Servicio</label><select id="log-service"><option>app-1</option><option>app-2</option><option>postgres</option><option>kafka</option></select><button id="load-logs">Consultar logs</button></div><p id="log-notice" class="notice" role="status"></p><pre id="logs">Elegí un servicio y consultá sus últimas 200 líneas. Los logs no son errores persistidos.</pre></section>
+  </section>
+</main>
+<footer>Herramienta local de evaluación. Los datos se conservan; el historial de ejecuciones vive en memoria de la consola.</footer>
+</body>
 </html>

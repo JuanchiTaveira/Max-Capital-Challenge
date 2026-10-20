@@ -48,11 +48,11 @@ abajo son entregables por incorporar, no herramientas que ya existan.
 
 ## 6. Interfaz del evaluador
 
-- [ ] 6.1 Crear la página de cuatro vistas con tablas, búsqueda de órdenes y JSON/ledger/resultados enlazados, usando recursos locales y estados de carga/vacío/error/stale; verificar en navegador recorrido de entorno vacío, escenario intercalado y consulta del duplicado tardío sin redondear valores.
-- [ ] 6.2 Incorporar editor y republicación exacta, mostrando confirmación Kafka separada del procesamiento SQL y errores junto al envío; verificar desde navegador un NEW/FILLED válido, republicación terminal y rechazo de borrador inválido sin crear registros.
-- [ ] 6.3 Incorporar controles locales y ejecución automática/paso a paso, avance recuperable por URL, cancelación y tarjetas pendientes deshabilitadas; verificar recarga a mitad de escenario, conflicto de acciones, ejecución pendiente rechazada y disponibilidad de consola al detener e iniciar una aplicación.
-- [ ] 6.4 Implementar refresco sin solicitudes solapadas con pausa, etiquetas, foco, contraste y presentación textual de payloads/logs; verificar navegación completa por teclado, ventana estrecha, pausa/reanudación y un campo con marcado HTML que se muestre inerte.
-- [ ] 6.5 Completar la guía breve del evaluador en README desde `docker compose up` hasta ejecutar disponibles e inspeccionar evidencia; verificar el recorrido literalmente desde un navegador sin CLI, SQL ni clientes de broker adicionales.
+- [x] 6.1 Crear la página de cuatro vistas con tablas, búsqueda de órdenes y JSON/ledger/resultados enlazados, usando recursos locales y estados de carga/vacío/error/stale; verificar en navegador recorrido de entorno vacío, escenario intercalado y consulta del duplicado tardío sin redondear valores.
+- [x] 6.2 Incorporar editor y republicación exacta, mostrando confirmación Kafka separada del procesamiento SQL y errores junto al envío; verificar desde navegador un NEW/FILLED válido, republicación terminal y rechazo de borrador inválido sin crear registros.
+- [x] 6.3 Incorporar controles locales y ejecución automática/paso a paso, avance recuperable por URL, cancelación y tarjetas pendientes deshabilitadas; verificar recarga a mitad de escenario, conflicto de acciones, ejecución pendiente rechazada y disponibilidad de consola al detener e iniciar una aplicación.
+- [x] 6.4 Implementar refresco sin solicitudes solapadas con pausa, etiquetas, foco, contraste y presentación textual de payloads/logs; verificar navegación completa por teclado, ventana estrecha, pausa/reanudación y un campo con marcado HTML que se muestre inerte.
+- [x] 6.5 Completar la guía breve del evaluador en README desde `docker compose up` hasta ejecutar disponibles e inspeccionar evidencia; verificar el recorrido literalmente desde un navegador sin CLI, SQL ni clientes de broker adicionales.
 
 ## 7. Verificación integrada y evidencia
 
