@@ -109,11 +109,23 @@ class ExecutionReportKafkaIT {
   @Test
   @Order(1)
   void processesInterleavedOrdersAndReplayAndIgnoresAbortedReports() throws Exception {
+    // GIVEN
     long a = orderForPartition(200, 0);
     long b = orderForPartition(300, 1);
     try (var producer = producer(false)) {
-      assertThat(send(producer, a, report(a, 1, "NEW", 0, 10)).partition()).isZero();
-      assertThat(send(producer, b, report(b, 1, "NEW", 0, 10)).partition()).isEqualTo(1);
+      // WHEN
+      var firstA = send(producer, a, report(a, 1, "NEW", 0, 10));
+
+      // THEN
+      assertThat(firstA.partition()).isZero();
+
+      // WHEN
+      var firstB = send(producer, b, report(b, 1, "NEW", 0, 10));
+
+      // THEN
+      assertThat(firstB.partition()).isEqualTo(1);
+
+      // WHEN
       send(producer, a, report(a, 2, "PARTIALLY_FILLED", 3, 7));
       send(producer, b, report(b, 2, "PARTIALLY_FILLED", 7, 3));
       send(producer, a, report(a, 3, "PARTIALLY_FILLED", 7, 3));
@@ -121,6 +133,8 @@ class ExecutionReportKafkaIT {
       var terminal = report(a, 4, "FILLED", 10, 0);
       send(producer, a, terminal);
       var last = send(producer, a, terminal);
+
+      // THEN
       await()
           .atMost(Duration.ofSeconds(20))
           .untilAsserted(
@@ -149,6 +163,7 @@ class ExecutionReportKafkaIT {
                 assertThat(row.get("applied_execution_count")).isEqualTo(4L);
               });
     }
+    // WHEN: Se aborta un ER y se publica un sucesor confirmado para observar el avance.
     try (var producer = producer(true)) {
       producer.initTransactions();
       producer.beginTransaction();
@@ -157,6 +172,7 @@ class ExecutionReportKafkaIT {
     }
     try (var producer = producer(false)) {
       var barrier = send(producer, 9999, report(9999, 2, "NEW", 0, 10));
+      // THEN
       await()
           .atMost(Duration.ofSeconds(20))
           .untilAsserted(
@@ -178,6 +194,7 @@ class ExecutionReportKafkaIT {
   @Test
   @Order(2)
   void keepsSqlFailureUncommittedAndResumesTheSameSequenceOnRestart() throws Exception {
+    // GIVEN
     try (var producer = producer(false)) {
       var first = send(producer, 701, report(701, 1, "NEW", 0, 10));
       await()
@@ -193,9 +210,12 @@ class ExecutionReportKafkaIT {
       jdbc.execute(
           "CREATE TRIGGER fail_kafka_append BEFORE INSERT ON app.execution_report_ledger FOR EACH ROW EXECUTE FUNCTION app.fail_kafka_append()");
       try {
+        // WHEN
         var failed = send(producer, 701, report(701, 2, "PARTIALLY_FILLED", 7, 3));
         send(producer, 701, report(701, 3, "FILLED", 10, 0));
         awaitStopped();
+
+        // THEN
         assertThat(count(701)).isEqualTo(1);
         assertThat(committed(failed.partition())).isEqualTo(failed.offset());
         assertThat(resultAt(failed)).isEmpty();
@@ -208,7 +228,10 @@ class ExecutionReportKafkaIT {
         jdbc.execute("DROP TRIGGER fail_kafka_append ON app.execution_report_ledger");
         jdbc.execute("DROP FUNCTION app.fail_kafka_append()");
       }
+      // WHEN: La falla SQL ya fue retirada; se reanuda desde el offset pendiente.
       start();
+
+      // THEN
       await()
           .atMost(Duration.ofSeconds(20))
           .untilAsserted(() -> assertThat(count(701)).isEqualTo(3));
@@ -228,6 +251,7 @@ class ExecutionReportKafkaIT {
   @Test
   @Order(3)
   void recoversCommittedResultWhenOffsetCommitFailsBeforeReachingKafka() throws Exception {
+    // GIVEN
     listener().stop();
     var fail = new AtomicBoolean(true);
     var factory = (DefaultKafkaConsumerFactory<Object, Object>) consumers;
@@ -256,10 +280,13 @@ class ExecutionReportKafkaIT {
                     });
     factory.addPostProcessor(interceptor);
     try (var producer = producer(false)) {
+      // WHEN
       start();
       var pending = send(producer, 750, report(750, 1, "NEW", 0, 10));
       var next = send(producer, 750, report(750, 2, "FILLED", 10, 0));
       awaitStopped();
+
+      // THEN
       assertThat(fail).isFalse();
       assertThat(committed(pending.partition())).isLessThanOrEqualTo(pending.offset());
       assertThat(count(750)).isEqualTo(1);
@@ -268,7 +295,10 @@ class ExecutionReportKafkaIT {
           .singleElement()
           .satisfies(row -> assertThat(row.get("outcome")).isEqualTo("APPLIED"));
       assertThat(resultAt(next)).isEmpty();
+      // WHEN: La falla ocurrió una sola vez y SQL ya conserva el resultado original.
       start();
+
+      // THEN
       await()
           .atMost(Duration.ofSeconds(20))
           .untilAsserted(
@@ -292,6 +322,7 @@ class ExecutionReportKafkaIT {
   @ExtendWith(OutputCaptureExtension.class)
   void keepsInvalidInputsPendingWithNoSuccessResultOrSuccessorApplication(CapturedOutput output)
       throws Exception {
+    // GIVEN
     int index = 0;
     for (String kind : List.of("json", "key", "identity", "transition")) {
       String topic = "f03-invalid-" + kind;
@@ -328,6 +359,7 @@ class ExecutionReportKafkaIT {
               case "identity" -> report(order, 1, "NEW", 0, 10).replace("VSCPC", "OTHER");
               default -> report(order, 2, "NEW", 0, 10);
             };
+        // WHEN
         var pending = send(producer, topic, order, invalid);
         var successor =
             send(
@@ -337,6 +369,8 @@ class ExecutionReportKafkaIT {
                 report(
                     order, 3, existing ? "FILLED" : "NEW", existing ? 10 : 0, existing ? 0 : 10));
         await().atMost(Duration.ofSeconds(20)).until(() -> !container.isRunning());
+
+        // THEN
         assertThat(resultAt(pending)).isEmpty();
         assertThat(resultAt(successor)).isEmpty();
         long offset = committed(topic, pending.partition());
@@ -348,8 +382,11 @@ class ExecutionReportKafkaIT {
                 "partition=" + pending.partition(),
                 "offset=" + pending.offset(),
                 "numericOrderId/key=" + order);
+        // WHEN
         container.start();
         await().atMost(Duration.ofSeconds(20)).until(() -> !container.isRunning());
+
+        // THEN
         assertThat(committed(topic, pending.partition())).isEqualTo(offset);
         assertThat(resultAt(pending)).isEmpty();
         assertThat(count(order)).isEqualTo(existing ? 1 : 0);
@@ -362,18 +399,27 @@ class ExecutionReportKafkaIT {
   @Test
   @Order(10)
   void preservesPoisonRecordAndDoesNotSkipToTheNextRecord() throws Exception {
+    // GIVEN
+    var invalidPayload = "{invalid-json";
     try (var producer = producer(false)) {
-      var poison = send(producer, 801, "{invalid-json");
+      // WHEN
+      var poison = send(producer, 801, invalidPayload);
       send(producer, 801, report(801, 1, "NEW", 0, 10));
       awaitStopped();
+
+      // THEN
       long offset = committed(poison.partition());
       assertThat(offset).isLessThanOrEqualTo(poison.offset());
       assertThat(count(801)).isZero();
       assertThat(resultAt(poison)).isEmpty();
+      // WHEN
       listener().start();
       awaitStopped();
+
+      // THEN
       assertThat(committed(poison.partition())).isEqualTo(offset);
       assertThat(count(801)).isZero();
+      // GIVEN
       var properties = new Properties();
       properties.put("bootstrap.servers", KAFKA.getBootstrapServers());
       properties.put(
@@ -383,6 +429,7 @@ class ExecutionReportKafkaIT {
       properties.put("enable.auto.commit", false);
       properties.put("isolation.level", "read_committed");
       try (var reader = new KafkaConsumer<String, String>(properties)) {
+        // WHEN
         var partition = new TopicPartition(TOPIC, poison.partition());
         reader.assign(List.of(partition));
         reader.seek(partition, poison.offset());
@@ -390,7 +437,10 @@ class ExecutionReportKafkaIT {
             .atMost(Duration.ofSeconds(15))
             .untilAsserted(
                 () -> {
+                  // WHEN: El poll debe repetirse dentro de la espera asíncrona.
                   var records = reader.poll(Duration.ofMillis(200));
+
+                  // THEN
                   assertThat(records).isNotEmpty();
                   assertThat(records.iterator().next().value()).isEqualTo("{invalid-json");
                 });

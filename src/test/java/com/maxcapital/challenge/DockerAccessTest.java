@@ -1,7 +1,7 @@
 package com.maxcapital.challenge;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.maxcapital.challenge.demo.DockerAccess;
 import java.util.ArrayList;
@@ -14,6 +14,7 @@ class DockerAccessTest {
 
   @Test
   void startsStoppedProjectContainerAndRedactsBoundedLogs() {
+    // GIVEN
     var calls = new ArrayList<List<String>>();
     var docker =
         new DockerAccess(
@@ -26,18 +27,27 @@ class DockerAccessTest {
               return "running";
             },
             List.of("password123"));
-    assertThat(docker.control("app-1", "start").get("containerState")).isEqualTo("running");
+    // WHEN
+    var result = docker.control("app-1", "start");
+
+    // THEN
+    assertThat(result.get("containerState")).isEqualTo("running");
     assertThat(calls.getFirst())
         .contains(
             "-aq",
             "label=com.docker.compose.project=demo-it",
             "label=com.docker.compose.service=app-1");
     assertThat(calls).contains(List.of("start", ID));
-    assertThat(docker.logs("app-1").get("text")).isEqualTo("ER pendiente: [oculto]");
+    // WHEN
+    var logs = docker.logs("app-1");
+
+    // THEN
+    assertThat(logs.get("text")).isEqualTo("ER pendiente: [oculto]");
   }
 
   @Test
   void rejectsForeignAmbiguousAndArbitraryTargetsBeforeControl() {
+    // GIVEN
     var calls = new ArrayList<List<String>>();
     var listing = new AtomicReference<>(ID);
     var docker =
@@ -48,15 +58,38 @@ class DockerAccessTest {
               return args.getFirst().equals("ps") ? listing.get() : labels("foreign", "app-1");
             },
             List.of());
-    assertThatThrownBy(() -> docker.control("app-1", "start")).hasMessageContaining("autorizados");
+    // WHEN
+    var foreignProject = catchThrowable(() -> docker.control("app-1", "start"));
+
+    // THEN
+    assertThat(foreignProject).hasMessageContaining("autorizados");
+
+    // GIVEN
     listing.set(ID + "\nabcdef0123456790");
-    assertThatThrownBy(() -> docker.control("app-1", "stop")).hasMessageContaining("único");
-    assertThatThrownBy(() -> docker.control("app-1", "rm"))
-        .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> docker.control("postgres", "kill"))
-        .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> docker.control("foreign", "start"))
-        .isInstanceOf(IllegalArgumentException.class);
+
+    // WHEN
+    var ambiguousTarget = catchThrowable(() -> docker.control("app-1", "stop"));
+
+    // THEN
+    assertThat(ambiguousTarget).hasMessageContaining("único");
+
+    // WHEN
+    var forbiddenAction = catchThrowable(() -> docker.control("app-1", "rm"));
+
+    // THEN
+    assertThat(forbiddenAction).isInstanceOf(IllegalArgumentException.class);
+
+    // WHEN
+    var forbiddenKill = catchThrowable(() -> docker.control("postgres", "kill"));
+
+    // THEN
+    assertThat(forbiddenKill).isInstanceOf(IllegalArgumentException.class);
+
+    // WHEN
+    var foreignService = catchThrowable(() -> docker.control("foreign", "start"));
+
+    // THEN
+    assertThat(foreignService).isInstanceOf(IllegalArgumentException.class);
     assertThat(calls).allSatisfy(args -> assertThat(args.getFirst()).isIn("ps", "inspect"));
   }
 

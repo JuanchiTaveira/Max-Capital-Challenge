@@ -64,6 +64,7 @@ class EvaluationConsoleQueriesIT {
 
   @Test
   void preservesLongIdsDecimalsAdditionalFieldsAndPublicContract() throws Exception {
+    // GIVEN
     String order = "9223372036854775806",
         fix = "9007199254740993",
         amount = "999999999999.12345678";
@@ -75,53 +76,89 @@ class EvaluationConsoleQueriesIT {
         """
             .formatted(order, fix, amount, amount);
     apply("exact", 0, 0, order, payload);
+
+    // WHEN
     var details = read("/demo/api/orders/" + order);
+
+    // THEN
     assertThat(details.path("numericOrderId").isString()).isTrue();
     assertThat(details.path("numericOrderId").asString()).isEqualTo(order);
     assertThat(details.path("nominalAmounts").asString()).isEqualTo(amount);
     var report = details.path("ledger").get(0).path("payload").asString();
     assertThat(report).contains(fix, amount, "<b>texto</b>");
+    // WHEN
     var publicView = read("/orders/" + order);
+
+    // THEN
     assertThat(publicView.path("numericOrderId").isIntegralNumber()).isTrue();
+    // GIVEN
     var access = new InstanceAccess("http://localhost:" + port, "http://localhost:" + port);
+
+    // WHEN
     var comparison = access.order("app-1", order);
+
+    // THEN
     assertThat(((Map<?, ?>) comparison.get("data")).get("numericOrderId")).isEqualTo(order);
     assertThat(((Map<?, ?>) comparison.get("data")).get("nominalAmounts")).isEqualTo(amount);
+    // WHEN
     var page = read("/demo/api/orders?limit=1");
+
+    // THEN
     assertThat(page.path("orders").get(0).path("numericOrderId").asString()).isEqualTo(order);
     for (var id : new String[] {"0", "abc", "9223372036854775808", "999999999999"}) {
-      assertThat(get("/demo/api/orders/" + id).statusCode())
-          .isEqualTo(id.equals("999999999999") ? 404 : 400);
+      // WHEN
+      var response = get("/demo/api/orders/" + id);
+
+      // THEN
+      assertThat(response.statusCode()).isEqualTo(id.equals("999999999999") ? 404 : 400);
     }
   }
 
   @Test
   void distinguishesHistoricalResultsAndFullPositionAndPaginates() throws Exception {
+    // GIVEN
     var initial = TestInfrastructure.report(11111, 1, "NEW", 0, 10);
     apply("history", 0, 1, "11111", initial);
     apply("history", 0, 2, "11111", TestInfrastructure.report(11111, 2, "FILLED", 10, 0));
     apply("history", 0, 3, "11111", initial);
     apply("history", 1, 1, "11112", TestInfrastructure.report(11112, 1, "NEW", 0, 10));
+    // WHEN
     var original = read("/demo/api/results?topic=history&partition=0&offset=1").path("result");
     var late = read("/demo/api/results?topic=history&partition=0&offset=3").path("result");
+    // THEN
     assertThat(original.path("status").asString()).isEqualTo("NEW");
     assertThat(late.path("outcome").asString()).isEqualTo("DUPLICATE");
     assertThat(late.path("status").asString()).isEqualTo("FILLED");
     assertThat(late.path("ledgerId").asString()).isEqualTo(original.path("ledgerId").asString());
-    assertThat(
-            read("/demo/api/results?topic=history&partition=1&offset=1")
-                .path("result")
-                .path("numericOrderId")
-                .asString())
-        .isEqualTo("11112");
-    assertThat(
-            read("/demo/api/results?topic=history&partition=0&offset=999").path("result").isNull())
-        .isTrue();
-    assertThat(read("/demo/api/orders/11111").path("ledger").size()).isEqualTo(2);
+    // WHEN
+    var otherPartition = read("/demo/api/results?topic=history&partition=1&offset=1");
+
+    // THEN
+    assertThat(otherPartition.path("result").path("numericOrderId").asString()).isEqualTo("11112");
+
+    // WHEN
+    var missing = read("/demo/api/results?topic=history&partition=0&offset=999");
+
+    // THEN
+    assertThat(missing.path("result").isNull()).isTrue();
+
+    // WHEN
+    var details = read("/demo/api/orders/11111");
+
+    // THEN
+    assertThat(details.path("ledger").size()).isEqualTo(2);
+
+    // WHEN
     var first = read("/demo/api/orders?limit=1");
     var cursor = first.path("nextCursor").asString();
+
+    // THEN
     assertThat(cursor).isNotBlank();
+
+    // WHEN
     var second = read("/demo/api/orders?limit=1&cursor=" + cursor);
+
+    // THEN
     assertThat(second.path("orders").get(0).path("numericOrderId").asLong())
         .isLessThan(first.path("orders").get(0).path("numericOrderId").asLong());
   }

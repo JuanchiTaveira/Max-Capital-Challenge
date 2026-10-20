@@ -41,30 +41,51 @@ class ConsoleOperationsIT {
   @Test
   void rejectsForeignMutationBeforeCallingControlsOrPublisherAndReportsSocketFailure()
       throws Exception {
+    // GIVEN
     clearInvocations(docker, kafka);
-    assertThat(
-            request("/demo/api/services/app-1/start", "http://foreign.invalid", "application/json")
-                .statusCode())
-        .isEqualTo(403);
-    assertThat(
-            request("/demo/api/reports", "http://foreign.invalid", "application/json").statusCode())
-        .isEqualTo(403);
-    assertThat(
-            request("/demo/api/services/app-1/start", "http://localhost:8083", "text/plain")
-                .statusCode())
-        .isIn(403, 415);
+
+    // WHEN
+    var foreignControl =
+        request("/demo/api/services/app-1/start", "http://foreign.invalid", "application/json");
+
+    // THEN
+    assertThat(foreignControl.statusCode()).isEqualTo(403);
+
+    // WHEN
+    var foreignPublication =
+        request("/demo/api/reports", "http://foreign.invalid", "application/json");
+
+    // THEN
+    assertThat(foreignPublication.statusCode()).isEqualTo(403);
+
+    // WHEN
+    var invalidContent =
+        request("/demo/api/services/app-1/start", "http://localhost:8083", "text/plain");
+
+    // THEN
+    assertThat(invalidContent.statusCode()).isIn(403, 415);
     verifyNoInteractions(docker, kafka);
+
+    // GIVEN
     when(docker.control("app-1", "start"))
         .thenThrow(new IllegalStateException("Socket Docker no disponible"));
+    // WHEN
     var response =
         request("/demo/api/services/app-1/start", "http://localhost:8083", "application/json");
+
+    // THEN
     assertThat(response.statusCode()).isEqualTo(503);
     assertThat(response.body()).contains("Socket Docker no disponible");
-    assertThat(get("/").statusCode()).isEqualTo(200);
+    // WHEN
+    var page = get("/");
+
+    // THEN
+    assertThat(page.statusCode()).isEqualTo(200);
   }
 
   @Test
   void combinesStoppedListenerHealthyHttpAndUnknownInstanceAsSeparateSources() throws Exception {
+    // GIVEN
     var json = new JsonMapper();
     when(jdbc.queryForObject("SELECT 1", Integer.class)).thenReturn(1);
     when(instances.read(eq("app-1"), anyString()))
@@ -78,7 +99,10 @@ class ConsoleOperationsIT {
                 json.readTree("{\"running\":false,\"assignments\":[]}")));
     when(instances.read(eq("app-2"), anyString()))
         .thenThrow(new IllegalStateException("No disponible"));
+    // WHEN
     var response = get("/demo/api/system");
+
+    // THEN
     assertThat(response.statusCode()).isEqualTo(200);
     var state = json.readTree(response.body());
     assertThat(state.path("database").path("available").asBoolean()).isTrue();
@@ -89,9 +113,14 @@ class ConsoleOperationsIT {
         .isFalse();
     assertThat(state.path("instances").get(1).path("consumer").path("available").asBoolean())
         .isFalse();
+    // GIVEN
     when(instances.read(eq("app-1"), anyString()))
         .thenThrow(new IllegalStateException("Ahora no disponible"));
+
+    // WHEN
     var stale = json.valueToTree(system.instance("app-1"));
+
+    // THEN
     assertThat(stale.path("readiness").path("available").asBoolean()).isFalse();
     assertThat(stale.path("readiness").path("stale").asBoolean()).isTrue();
     assertThat(stale.path("readiness").path("observedAt").asString())

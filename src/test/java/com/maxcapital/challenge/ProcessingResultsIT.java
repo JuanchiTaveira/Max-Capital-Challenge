@@ -2,7 +2,7 @@ package com.maxcapital.challenge;
 
 import static com.maxcapital.challenge.TestInfrastructure.report;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
 import com.maxcapital.challenge.adapter.out.jdbc.JdbcOrderRepository;
@@ -66,17 +66,34 @@ class ProcessingResultsIT {
 
   @Test
   void recoversOriginalAppliedAndDuplicateSnapshotsAfterTheOrderAdvances() {
-    var first = apply(context, 501, 0, report(501, 1, "NEW", 0, 10));
-    var duplicate = apply(context, 501, 1, report(501, 1, "NEW", 0, 10));
+    // GIVEN
+    var initial = report(501, 1, "NEW", 0, 10);
+
+    // WHEN
+    var first = apply(context, 501, 0, initial);
+    var duplicate = apply(context, 501, 1, initial);
+
+    // THEN
     assertThat(first.outcome()).isEqualTo(Outcome.APPLIED);
     assertThat(duplicate.outcome()).isEqualTo(Outcome.DUPLICATE);
     assertThat(duplicate.ledgerId()).isEqualTo(first.ledgerId());
+    // WHEN
     apply(context, 501, 2, report(501, 2, "PARTIALLY_FILLED", 7, 3));
     apply(context, 501, 3, report(501, 3, "FILLED", 10, 0));
     var replay = apply(context, 501, 0, report(501, 1, "NEW", 0, 10).replace("10,", "10.0,"));
+    // THEN
     equalResult(replay, first);
-    equalResult(apply(context, 501, 1, report(501, 1, "NEW", 0, 10)), duplicate);
+
+    // WHEN
+    var duplicateReplay = apply(context, 501, 1, report(501, 1, "NEW", 0, 10));
+
+    // THEN
+    equalResult(duplicateReplay, duplicate);
+
+    // WHEN
     var lateDuplicate = apply(context, 501, 4, report(501, 1, "NEW", 0, 10));
+
+    // THEN
     assertThat(lateDuplicate.outcome()).isEqualTo(Outcome.DUPLICATE);
     assertThat(lateDuplicate.state().status().name()).isEqualTo("FILLED");
     assertThat(lateDuplicate.ledgerId()).isEqualTo(first.ledgerId());
@@ -87,34 +104,66 @@ class ProcessingResultsIT {
 
   @Test
   void rejectsChangedPositionAndBusinessIdentityWithoutRecordingSuccess() {
+    // GIVEN
     var original = apply(context, 502, 0, report(502, 1, "NEW", 0, 10));
-    assertThatThrownBy(
-            () -> apply(context, 502, 0, report(502, 1, "NEW", 0, 10).replace("VSCPC", "OTHER")))
-        .hasMessageContaining("contenido distinto para posición");
-    assertThatThrownBy(() -> apply(context, 502, 0, report(599, 1, "NEW", 0, 10)))
-        .hasMessageContaining("contenido distinto para posición");
-    assertThatThrownBy(
+
+    // WHEN
+    var changedPayload =
+        catchThrowable(
+            () -> apply(context, 502, 0, report(502, 1, "NEW", 0, 10).replace("VSCPC", "OTHER")));
+
+    // THEN
+    assertThat(changedPayload).hasMessageContaining("contenido distinto para posición");
+
+    // WHEN
+    var changedOrder = catchThrowable(() -> apply(context, 502, 0, report(599, 1, "NEW", 0, 10)));
+
+    // THEN
+    assertThat(changedOrder).hasMessageContaining("contenido distinto para posición");
+
+    // WHEN
+    var changedKey =
+        catchThrowable(
             () ->
-                parser.parse("599", report(502, 1, "NEW", 0, 10).getBytes(StandardCharsets.UTF_8)))
-        .hasMessageContaining("key Kafka distinta");
-    assertThatThrownBy(
-            () -> apply(context, 502, 1, report(502, 1, "NEW", 0, 10).replace("VSCPC", "OTHER")))
-        .hasMessageContaining("contenido distinto para fixId");
-    assertThatThrownBy(() -> apply(context, 502, 2, report(502, 2, "NEW", 0, 10)))
-        .hasMessageContaining("transición inválida");
-    equalResult(apply(context, 502, 0, report(502, 1, "NEW", 0, 10)), original);
+                parser.parse("599", report(502, 1, "NEW", 0, 10).getBytes(StandardCharsets.UTF_8)));
+
+    // THEN
+    assertThat(changedKey).hasMessageContaining("key Kafka distinta");
+
+    // WHEN
+    var changedIdentity =
+        catchThrowable(
+            () -> apply(context, 502, 1, report(502, 1, "NEW", 0, 10).replace("VSCPC", "OTHER")));
+
+    // THEN
+    assertThat(changedIdentity).hasMessageContaining("contenido distinto para fixId");
+
+    // WHEN
+    var invalidTransition =
+        catchThrowable(() -> apply(context, 502, 2, report(502, 2, "NEW", 0, 10)));
+
+    // THEN
+    assertThat(invalidTransition).hasMessageContaining("transición inválida");
+
+    // WHEN
+    var replay = apply(context, 502, 0, report(502, 1, "NEW", 0, 10));
+
+    // THEN
+    equalResult(replay, original);
     assertCounts(502, 1, 1, 1);
     assertCounts(599, 0, 0, 0);
   }
 
   @Test
   void serializesConcurrentSamePositionAndConcurrentRepublications() throws Exception {
+    // GIVEN
     try (var other = application();
         var executor = Executors.newFixedThreadPool(2)) {
       for (long order : new long[] {503, 504}) {
         var ready = new CountDownLatch(2);
         var go = new CountDownLatch(1);
         long secondOffset = order == 503 ? 0 : 1;
+        // WHEN
         var first =
             executor.submit(
                 () -> {
@@ -133,6 +182,7 @@ class ProcessingResultsIT {
         go.countDown();
         var a = first.get(20, TimeUnit.SECONDS);
         var b = second.get(20, TimeUnit.SECONDS);
+        // THEN
         if (order == 503) {
           equalResult(a, b);
           assertThat(a.outcome()).isEqualTo(Outcome.APPLIED);
@@ -148,6 +198,7 @@ class ProcessingResultsIT {
 
   @Test
   void rollsBackAllWritesWhenResultOrLedgerInsertionFailsAndRetriesCleanly() {
+    // GIVEN: Se inyecta una falla de escritura tanto para órdenes nuevas como existentes.
     for (String table : List.of("processing_results", "execution_report_ledger")) {
       long base = table.equals("processing_results") ? 510 : 520;
       for (long order : new long[] {base, base + 1}) {
@@ -172,8 +223,11 @@ class ProcessingResultsIT {
                 existing ? 10 : 0,
                 existing ? 0 : 10);
         try {
-          assertThatThrownBy(() -> apply(context, order, 1, payload))
-              .isInstanceOf(RuntimeException.class);
+          // WHEN
+          var failure = catchThrowable(() -> apply(context, order, 1, payload));
+
+          // THEN
+          assertThat(failure).isInstanceOf(RuntimeException.class);
           assertCounts(order, existing ? 1 : 0, existing ? 1 : 0, existing ? 1 : 0);
           if (existing)
             assertThat(
@@ -186,8 +240,12 @@ class ProcessingResultsIT {
           jdbc.execute("DROP TRIGGER fail_result_test ON app." + table);
           jdbc.execute("DROP FUNCTION app.fail_result_test()");
         }
+        // WHEN: Sin la falla, el mismo registro puede resolverse y recuperarse.
         var resolved = apply(context, order, 1, payload);
-        equalResult(apply(context, order, 1, payload), resolved);
+        var replay = apply(context, order, 1, payload);
+
+        // THEN
+        equalResult(replay, resolved);
         assertCounts(order, existing ? 2 : 1, existing ? 2 : 1, existing ? 2 : 1);
       }
     }
@@ -195,30 +253,53 @@ class ProcessingResultsIT {
 
   @Test
   void recoversFromAnotherApplicationAndAfterClosingAllContexts() {
+    // GIVEN
     var applied = apply(context, 530, 0, report(530, 1, "NEW", 0, 10));
     var duplicate = apply(context, 530, 1, report(530, 1, "NEW", 0, 10));
     apply(context, 530, 2, report(530, 2, "FILLED", 10, 0));
     try (var second = application()) {
-      equalResult(apply(second, 530, 0, report(530, 1, "NEW", 0, 10)), applied);
-      equalResult(apply(second, 530, 1, report(530, 1, "NEW", 0, 10)), duplicate);
+      // WHEN
+      var replay = apply(second, 530, 0, report(530, 1, "NEW", 0, 10));
+
+      // THEN
+      equalResult(replay, applied);
+
+      // WHEN
+      var duplicateReplay = apply(second, 530, 1, report(530, 1, "NEW", 0, 10));
+
+      // THEN
+      equalResult(duplicateReplay, duplicate);
     }
+    // WHEN: Se cierran todos los contextos antes de abrir una aplicación nueva.
     context.close();
     try (var restarted = application()) {
-      equalResult(apply(restarted, 530, 0, report(530, 1, "NEW", 0, 10)), applied);
-      equalResult(apply(restarted, 530, 1, report(530, 1, "NEW", 0, 10)), duplicate);
+      var replay = apply(restarted, 530, 0, report(530, 1, "NEW", 0, 10));
+
+      // THEN
+      equalResult(replay, applied);
+
+      // WHEN
+      var duplicateReplay = apply(restarted, 530, 1, report(530, 1, "NEW", 0, 10));
+
+      // THEN
+      equalResult(duplicateReplay, duplicate);
     }
     assertCounts(530, 2, 2, 3);
   }
 
   @Test
   void recordsDuplicateForLegacyLedgerWithoutBackfillingUnknownPositions() {
+    // GIVEN
     var orders = new JdbcOrderRepository(jdbc);
     var parsed = parser.parse("540", report(540, 1, "NEW", 0, 10).getBytes(StandardCharsets.UTF_8));
     orders.initialize(parsed.report());
     orders.save(orders.lock(540).apply(parsed.report()));
     long ledger = orders.append(parsed.report(), parsed.payload());
     assertCounts(540, 1, 1, 0);
+    // WHEN
     var known = apply(context, 540, 99, report(540, 1, "NEW", 0, 10));
+
+    // THEN
     assertThat(known.outcome()).isEqualTo(Outcome.DUPLICATE);
     assertThat(known.ledgerId()).isEqualTo(ledger);
     assertCounts(540, 1, 1, 1);

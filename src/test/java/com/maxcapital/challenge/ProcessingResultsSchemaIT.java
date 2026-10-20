@@ -2,7 +2,7 @@ package com.maxcapital.challenge;
 
 import static com.maxcapital.challenge.TestInfrastructure.report;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
 import com.maxcapital.challenge.adapter.out.jdbc.JdbcOrderRepository;
@@ -40,6 +40,7 @@ class ProcessingResultsSchemaIT {
 
   @Test
   void roundTripsResultsAndComparesFullJsonWithoutDependingOnFormatting() {
+    // GIVEN
     var parsed =
         new ExecutionReportParser()
             .parse("301", report(301, 1, "NEW", 0, 10).getBytes(StandardCharsets.UTF_8));
@@ -56,37 +57,57 @@ class ProcessingResultsSchemaIT {
           new InputPosition("other", 0, 7)
         }) {
       var expected = new ProcessingResult(position, Outcome.APPLIED, 301, 1, ledger, state);
+
+      // WHEN
       results.insert(expected);
       var equivalent = parsed.payload().replace("10", "10.0");
       var stored = results.find(position, equivalent).orElseThrow();
+      // THEN
       assertThat(stored.identicalReport()).isTrue();
       assertThat(stored.result())
           .usingRecursiveComparison()
           .withComparatorForType(BigDecimal::compareTo, BigDecimal.class)
           .isEqualTo(expected);
-      assertThat(
-              results
-                  .find(position, parsed.payload().replace("VSCPC", "OTHER"))
-                  .orElseThrow()
-                  .identicalReport())
-          .isFalse();
+      // WHEN
+      var changed =
+          results.find(position, parsed.payload().replace("VSCPC", "OTHER")).orElseThrow();
+
+      // THEN
+      assertThat(changed.identicalReport()).isFalse();
     }
+    // GIVEN
     var reordered = new tools.jackson.databind.json.JsonMapper().readTree(parsed.payload());
     var tree = new tools.jackson.databind.json.JsonMapper().createObjectNode();
     tree.put("ticker", "VSCPC");
     reordered.properties().forEach(entry -> tree.set(entry.getKey(), entry.getValue()));
-    assertThat(
-            results
-                .find(new InputPosition("reports", 0, 7), tree.toString())
-                .orElseThrow()
-                .identicalReport())
-        .isTrue();
+    // WHEN
+    var reorderedResult =
+        results.find(new InputPosition("reports", 0, 7), tree.toString()).orElseThrow();
+
+    // THEN
+    assertThat(reorderedResult.identicalReport()).isTrue();
+
+    // WHEN
     var match = orders.match(301, 1, parsed.payload()).orElseThrow();
+
+    // THEN
     assertThat(match.ledgerId()).isEqualTo(ledger);
     assertThat(match.identical()).isTrue();
-    assertThat(orders.match(301, 2, parsed.payload())).isEmpty();
-    assertThat(results.find(new InputPosition("reports", 0, 8), parsed.payload())).isEmpty();
-    assertThatThrownBy(
+    // WHEN
+    var missingReport = orders.match(301, 2, parsed.payload());
+
+    // THEN
+    assertThat(missingReport).isEmpty();
+
+    // WHEN
+    var missingPosition = results.find(new InputPosition("reports", 0, 8), parsed.payload());
+
+    // THEN
+    assertThat(missingPosition).isEmpty();
+
+    // WHEN
+    var duplicatePosition =
+        catchThrowable(
             () ->
                 results.insert(
                     new ProcessingResult(
@@ -95,9 +116,14 @@ class ProcessingResultsSchemaIT {
                         301,
                         1,
                         ledger,
-                        state)))
-        .isInstanceOf(DataIntegrityViolationException.class);
-    assertThatThrownBy(
+                        state)));
+
+    // THEN
+    assertThat(duplicatePosition).isInstanceOf(DataIntegrityViolationException.class);
+
+    // WHEN
+    var mismatchedOrder =
+        catchThrowable(
             () ->
                 results.insert(
                     new ProcessingResult(
@@ -106,27 +132,45 @@ class ProcessingResultsSchemaIT {
                         302,
                         1,
                         ledger,
-                        state)))
-        .isInstanceOf(DataIntegrityViolationException.class);
-    assertThatThrownBy(
+                        state)));
+
+    // THEN
+    assertThat(mismatchedOrder).isInstanceOf(DataIntegrityViolationException.class);
+
+    // WHEN
+    var negativeOffset =
+        catchThrowable(
             () ->
                 jdbc.update(
-                    "UPDATE app.processing_results SET record_offset=-1 WHERE numeric_order_id=301"))
-        .isInstanceOf(DataIntegrityViolationException.class);
-    assertThatThrownBy(
+                    "UPDATE app.processing_results SET record_offset=-1 WHERE numeric_order_id=301"));
+
+    // THEN
+    assertThat(negativeOffset).isInstanceOf(DataIntegrityViolationException.class);
+
+    // WHEN
+    var invalidOutcome =
+        catchThrowable(
             () ->
                 jdbc.update(
-                    "UPDATE app.processing_results SET outcome='FAILED' WHERE numeric_order_id=301"))
-        .isInstanceOf(DataIntegrityViolationException.class);
-    assertThatThrownBy(
+                    "UPDATE app.processing_results SET outcome='FAILED' WHERE numeric_order_id=301"));
+
+    // THEN
+    assertThat(invalidOutcome).isInstanceOf(DataIntegrityViolationException.class);
+
+    // WHEN
+    var missingStatus =
+        catchThrowable(
             () ->
                 jdbc.update(
-                    "UPDATE app.processing_results SET status=NULL WHERE numeric_order_id=301"))
-        .isInstanceOf(DataIntegrityViolationException.class);
+                    "UPDATE app.processing_results SET status=NULL WHERE numeric_order_id=301"));
+
+    // THEN
+    assertThat(missingStatus).isInstanceOf(DataIntegrityViolationException.class);
   }
 
   @Test
   void upgradesV1WithDataWithoutInventingHistoricalResults() {
+    // GIVEN
     jdbc.execute("CREATE DATABASE legacy_results");
     var legacy =
         source(
@@ -142,7 +186,11 @@ class ProcessingResultsSchemaIT {
         "INSERT INTO app.execution_report_ledger(numeric_order_id,fix_id,report) VALUES (401,1,CAST(? AS jsonb))",
         report(401, 1, "NEW", 0, 10));
     var before = oldJdbc.queryForList("SELECT * FROM app.execution_report_ledger");
+
+    // WHEN
     Flyway.configure().dataSource(legacy).schemas("app").load().migrate();
+
+    // THEN
     assertThat(oldJdbc.queryForList("SELECT * FROM app.execution_report_ledger")).isEqualTo(before);
     assertThat(
             oldJdbc.queryForObject(

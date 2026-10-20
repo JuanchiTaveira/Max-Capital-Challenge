@@ -2,7 +2,7 @@ package com.maxcapital.challenge;
 
 import static com.maxcapital.challenge.TestInfrastructure.report;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
 import com.maxcapital.challenge.adapter.out.kafka.KafkaHealthIndicator;
@@ -56,17 +56,20 @@ class OrderPersistenceIT {
   @Test
   void returnsCommittedStateAndOrderedLedgerTogetherAndHandlesInvalidOrAbsentOrders()
       throws Exception {
+    // GIVEN
     apply(report(106, 1, "NEW", 0, 10));
     apply(report(106, 2, "PARTIALLY_FILLED", 7, 3));
     var filled = report(106, 3, "FILLED", 10, 0);
     apply(filled);
     apply(filled);
     try (var client = HttpClient.newHttpClient()) {
+      // WHEN
       var response =
           client.send(
               HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/orders/106"))
                   .build(),
               HttpResponse.BodyHandlers.ofString());
+      // THEN
       assertThat(response.statusCode()).isEqualTo(200);
       var body = new tools.jackson.databind.json.JsonMapper().readTree(response.body());
       assertThat(body.path("status").asString()).isEqualTo("FILLED");
@@ -83,12 +86,14 @@ class OrderPersistenceIT {
         assertThat(entry.path("report").path("ticker").asString()).isEqualTo("VSCPC");
       }
       for (var invalid : new String[] {"0", "-1", "abc", "9223372036854775808", "999999"}) {
+        // WHEN
         var result =
             client.send(
                 HttpRequest.newBuilder(
                         URI.create("http://localhost:" + port + "/orders/" + invalid))
                     .build(),
                 HttpResponse.BodyHandlers.discarding());
+        // THEN
         assertThat(result.statusCode()).isEqualTo(invalid.equals("999999") ? 404 : 400);
       }
     }
@@ -96,32 +101,48 @@ class OrderPersistenceIT {
 
   @Test
   void appliesSnapshotsAndRecognizesTerminalReplayBeforeTransition() {
+    // GIVEN
     apply(report(101, 1, "NEW", 0, 10));
+
+    // WHEN
     apply(report(101, 2, "PARTIALLY_FILLED", 3, 7));
     apply(report(101, 3, "PARTIALLY_FILLED", 7, 3));
+    // THEN
     assertThat(
             jdbc.queryForObject(
                 "SELECT accumulative_nominal_amount FROM app.orders WHERE numeric_order_id=101",
                 java.math.BigDecimal.class))
         .isEqualByComparingTo("7");
+    // GIVEN
     var filled = report(101, 4, "FILLED", 10, 0);
+
+    // WHEN
     apply(filled);
     apply(filled.replace("10,", "10.0,"));
+    // THEN
     assertThat(count(101)).isEqualTo(4);
     var ids =
         jdbc.queryForList(
             "SELECT ledger_id FROM app.execution_report_ledger WHERE numeric_order_id=101 ORDER BY ledger_id",
             Long.class);
     assertThat(ids).hasSize(4).isSorted().doesNotHaveDuplicates();
-    assertThatThrownBy(() -> apply(filled.replace("VSCPC", "OTHER")))
-        .hasMessageContaining("contenido distinto");
-    assertThatThrownBy(() -> apply(report(101, 5, "FILLED", 10, 0)))
-        .hasMessageContaining("transición inválida");
+    // WHEN
+    var changedPayload = catchThrowable(() -> apply(filled.replace("VSCPC", "OTHER")));
+
+    // THEN
+    assertThat(changedPayload).hasMessageContaining("contenido distinto");
+
+    // WHEN
+    var invalidTransition = catchThrowable(() -> apply(report(101, 5, "FILLED", 10, 0)));
+
+    // THEN
+    assertThat(invalidTransition).hasMessageContaining("transición inválida");
     assertThat(count(101)).isEqualTo(4);
   }
 
   @Test
   void rollsBackStateCounterAndLedgerWhenAppendFails() {
+    // GIVEN
     apply(report(102, 1, "NEW", 0, 10));
     jdbc.execute(
         """
@@ -132,8 +153,11 @@ class OrderPersistenceIT {
     jdbc.execute(
         "CREATE TRIGGER fail_test_append BEFORE INSERT ON app.execution_report_ledger FOR EACH ROW EXECUTE FUNCTION app.fail_test_append()");
     try {
-      assertThatThrownBy(() -> apply(report(102, 2, "FILLED", 10, 0)))
-          .isInstanceOf(RuntimeException.class);
+      // WHEN
+      var failure = catchThrowable(() -> apply(report(102, 2, "FILLED", 10, 0)));
+
+      // THEN
+      assertThat(failure).isInstanceOf(RuntimeException.class);
       assertThat(count(102)).isEqualTo(1);
       assertThat(
               jdbc.queryForObject(
@@ -148,21 +172,31 @@ class OrderPersistenceIT {
       jdbc.execute("DROP TRIGGER fail_test_append ON app.execution_report_ledger");
       jdbc.execute("DROP FUNCTION app.fail_test_append()");
     }
+    // WHEN: Se reintenta después de retirar la falla inyectada.
     apply(report(102, 2, "FILLED", 10, 0));
+
+    // THEN
     assertThat(count(102)).isEqualTo(2);
   }
 
   @Test
   void serializesConcurrentCreationAndDuplicateChecks() throws Exception {
+    // GIVEN
     try (var executor = Executors.newFixedThreadPool(2)) {
+      // WHEN
       var first = executor.submit(() -> apply(report(103, 1, "NEW", 0, 10)));
       var second = executor.submit(() -> apply(report(103, 1, "NEW", 0, 10)));
       first.get();
       second.get();
     }
+    // THEN
     assertThat(count(103)).isEqualTo(1);
-    assertThatThrownBy(() -> apply(report(104, 1, "FILLED", 10, 0)))
-        .isInstanceOf(IllegalArgumentException.class);
+
+    // WHEN
+    var missingNew = catchThrowable(() -> apply(report(104, 1, "FILLED", 10, 0)));
+
+    // THEN
+    assertThat(missingNew).isInstanceOf(IllegalArgumentException.class);
     assertThat(
             jdbc.queryForObject(
                 "SELECT count(*) FROM app.orders WHERE numeric_order_id=104", Long.class))
@@ -171,21 +205,40 @@ class OrderPersistenceIT {
 
   @Test
   void enforcesPrimaryForeignAndReportIdentityConstraints() {
+    // GIVEN
     apply(report(105, 1, "NEW", 0, 10));
-    assertThatThrownBy(
+
+    // WHEN
+    var duplicateReport =
+        catchThrowable(
             () ->
                 jdbc.update(
-                    "INSERT INTO app.execution_report_ledger(numeric_order_id,fix_id,report) VALUES(105,1,'{}')"))
+                    "INSERT INTO app.execution_report_ledger(numeric_order_id,fix_id,report) VALUES(105,1,'{}')"));
+
+    // THEN
+    assertThat(duplicateReport)
         .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
-    assertThatThrownBy(
+
+    // WHEN
+    var missingOrder =
+        catchThrowable(
             () ->
                 jdbc.update(
-                    "INSERT INTO app.execution_report_ledger(numeric_order_id,fix_id,report) VALUES(999,1,'{}')"))
+                    "INSERT INTO app.execution_report_ledger(numeric_order_id,fix_id,report) VALUES(999,1,'{}')"));
+
+    // THEN
+    assertThat(missingOrder)
         .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
-    assertThatThrownBy(
+
+    // WHEN
+    var duplicateOrder =
+        catchThrowable(
             () ->
                 jdbc.update(
-                    "INSERT INTO app.orders SELECT * FROM app.orders WHERE numeric_order_id=105"))
+                    "INSERT INTO app.orders SELECT * FROM app.orders WHERE numeric_order_id=105"));
+
+    // THEN
+    assertThat(duplicateOrder)
         .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
   }
 

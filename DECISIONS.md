@@ -164,14 +164,81 @@ resets arbitrarios de offsets y recreación de topics. Una versión operativa ne
 replicación, respaldos y procedimientos de recuperación compatibles con la identidad y
 la secuencia de los ER.
 
-Se priorizan pruebas de las fronteras donde una falla puede romper las garantías:
-transacción SQL, secuencia Kafka y reentrega. La evidencia actual incluye [pruebas SQL y
-HTTP](src/test/java/com/maxcapital/challenge/OrderPersistenceIT.java) de rollback
-conjunto, concurrencia y duplicados terminales, y [pruebas
-Kafka](src/test/java/com/maxcapital/challenge/ExecutionReportKafkaIT.java) de órdenes
-intercaladas, reentrega y errores sin avance de offset. El [smoke de dos
-instancias](scripts/verify-f02.ps1) comprueba consulta y persistencia tras reinicio.
-Estas pruebas no demuestran settlement ni recuperación completa de mensajes permanentes.
+### Pruebas prioritarias para el evaluador
+
+El recorrido recomendado empieza por las fronteras donde una falla puede romper
+la secuencia, la idempotencia o la atomicidad. Los bloques GIVEN, WHEN y THEN
+identifican las precondiciones, la acción y sus verificaciones; en escenarios de
+recuperación se repiten para distinguir la falla del nuevo intento.
+
+| Prioridad | Clase | Qué permite evaluar |
+| --- | --- | --- |
+| Primera | [ExecutionReportKafkaIT](src/test/java/com/maxcapital/challenge/ExecutionReportKafkaIT.java) | Consumo real con Kafka/PostgreSQL, secuencia por orden, reentrega y offsets pendientes ante fallas. |
+| Primera | [ProcessingResultsIT](src/test/java/com/maxcapital/challenge/ProcessingResultsIT.java) | Atomicidad SQL, concurrencia entre contextos de aplicación y recuperación de resultados durables. |
+| Respaldo del núcleo | [OrderPersistenceIT](src/test/java/com/maxcapital/challenge/OrderPersistenceIT.java) | Consistencia de estado, contador y ledger; snapshots y deduplicación de terminales. |
+
+En `ExecutionReportKafkaIT`, revisar primero:
+
+- `recoversCommittedResultWhenOffsetCommitFailsBeforeReachingKafka`: inyecta una
+  falla de confirmación del offset después del commit SQL. Comprueba resultado
+  durable, sucesor pendiente y recuperación del resultado original sin repetir
+  el efecto al reanudar.
+- `keepsSqlFailureUncommittedAndResumesTheSameSequenceOnRestart`: una falla de
+  inserción SQL revierte el intento y deja el offset pendiente; al retirar la
+  falla y reiniciar el listener, el ledger conserva la secuencia completa.
+- `processesInterleavedOrdersAndReplayAndIgnoresAbortedReports`: verifica órdenes
+  intercaladas en dos particiones, un terminal duplicado sin incremento adicional
+  y ausencia de efectos SQL para una transacción productora abortada.
+
+En `ProcessingResultsIT`, revisar primero:
+
+- `rollsBackAllWritesWhenResultOrLedgerInsertionFailsAndRetriesCleanly`: falla
+  la escritura del resultado o del ledger, tanto al crear como al actualizar una
+  orden; verifica rollback conjunto y reintento sin efectos duplicados.
+- `serializesConcurrentSamePositionAndConcurrentRepublications`: dos contextos
+  compiten por la misma posición o por el mismo ER en offsets distintos; sólo
+  hay una aplicación y una entrada de ledger, con los resultados correspondientes.
+- `recoversFromAnotherApplicationAndAfterClosingAllContexts`: recupera resultados
+  APPLIED y DUPLICATE desde otro contexto y después de cerrar todos los anteriores,
+  conservando sus snapshots aunque la orden ya haya avanzado.
+
+En `OrderPersistenceIT`, revisar
+`rollsBackStateCounterAndLedgerWhenAppendFails` para el rollback ante una falla
+del ledger y `appliesSnapshotsAndRecognizesTerminalReplayBeforeTransition` para
+la adopción de acumulados y la deduplicación antes de validar terminales.
+
+Como lectura complementaria,
+[DemoScenariosIT](src/test/java/com/maxcapital/challenge/DemoScenariosIT.java), en
+`executesAvailableWithRealKafkaSqlAndTwoInstancesAndKeepsPendingExcluded`, ejecuta
+los cinco escenarios disponibles con dos aplicaciones, Kafka y PostgreSQL reales.
+Los controles Docker están sustituidos: ese test comprueba la coordinación del
+reinicio, sin reiniciar procesos reales.
+[EvaluationConsoleRuntimeIT](src/test/java/com/maxcapital/challenge/EvaluationConsoleRuntimeIT.java),
+en `keepsExactlyTwoConsumersAndObservesStoppedListenerSeparatelyFromHttp`, verifica
+dos miembros reales del grupo y una partición por aplicación, además de distinguir
+un listener detenido de HTTP saludable. La composición del grupo por sí sola no
+prueba recuperación ante caídas. El [smoke de dos instancias](scripts/verify-f02.ps1)
+complementa esas pruebas con consulta y persistencia tras reinicios reales,
+ejecutados después de consumir el lote.
+
+### Límites de esta evidencia
+
+La falla de confirmación del offset es controlada y ocurre antes de enviar el
+commit al broker: no demuestra un commit Kafka de resultado incierto. Reiniciar
+un listener o cerrar contextos no equivale a matar un proceso entre commits SQL
+y Kafka, ni prueba un rebalanceo durante una escritura.
+
+`preservesPoisonRecordAndDoesNotSkipToTheNextRecord` y
+`keepsInvalidInputsPendingWithNoSuccessResultOrSuccessorApplication`, de
+`ExecutionReportKafkaIT`, comprueban que mensajes inválidos y sus sucesores no se
+descartan silenciosamente, que el offset no avanza y que se conserva diagnóstico.
+También muestran el bloqueo actual: al reiniciar, el mensaje inválido vuelve a
+fallar. No prueban una solución al bloqueo indefinido.
+
+Según el estado del README, settlement, recuperación completa ante caídas y
+rebalanceos y cuarentena continúan pendientes en F-04, F-05 y F-06. Ninguna de
+estas pruebas demuestra publicación de settlement exactamente una vez; la
+visibilidad `read_committed` verificada corresponde a la entrada.
 
 ## 9. Resultado por posición Kafka
 

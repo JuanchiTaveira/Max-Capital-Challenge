@@ -101,16 +101,23 @@ class RuntimeInfrastructureIT {
 
   @Test
   void exposesHealthyProbesAndPublicIdentityWithoutConnectionDetails() throws Exception {
+    // GIVEN
     var json = new JsonMapper();
     for (var probe : List.of("liveness", "readiness")) {
+      // WHEN
       var response = get("/actuator/health/" + probe);
+
+      // THEN
       assertThat(response.statusCode()).isEqualTo(200);
       var body = json.readTree(response.body());
       assertThat(body.path("status").asString()).isEqualTo("UP");
       assertThat(body.has("components")).isFalse();
       assertThat(response.body()).doesNotContain("jdbc:", "password", "bootstrap.servers");
     }
+    // WHEN
     var response = get("/actuator/info");
+
+    // THEN
     assertThat(response.statusCode()).isEqualTo(200);
     var app = json.readTree(response.body()).path("app");
     assertThat(app.path("name").asString()).isEqualTo("max-capital-challenge");
@@ -120,40 +127,61 @@ class RuntimeInfrastructureIT {
 
   @Test
   void connectsToPostgresAndInitializesTheFlywaySchema() {
-    assertThat(jdbc.queryForObject("select 1", Integer.class)).isEqualTo(1);
-    assertThat(
-            jdbc.queryForObject(
-                "select exists(select 1 from information_schema.schemata where schema_name = 'app')",
-                Boolean.class))
-        .isTrue();
-    assertThat(
-            jdbc.queryForObject(
-                "select exists(select 1 from information_schema.tables"
-                    + " where table_schema = 'app' and table_name = 'flyway_schema_history')",
-                Boolean.class))
-        .isTrue();
+    // GIVEN: Spring inicia la aplicación contra el PostgreSQL del fixture.
+    // WHEN
+    var connection = jdbc.queryForObject("select 1", Integer.class);
+
+    // THEN
+    assertThat(connection).isEqualTo(1);
+
+    // WHEN
+    var schemaExists =
+        jdbc.queryForObject(
+            "select exists(select 1 from information_schema.schemata where schema_name = 'app')",
+            Boolean.class);
+
+    // THEN
+    assertThat(schemaExists).isTrue();
+
+    // WHEN
+    var historyExists =
+        jdbc.queryForObject(
+            "select exists(select 1 from information_schema.tables"
+                + " where table_schema = 'app' and table_name = 'flyway_schema_history')",
+            Boolean.class);
+
+    // THEN
+    assertThat(historyExists).isTrue();
   }
 
   @Test
   void keepsTwoPartitionTopicsAndOnlyExposesCommittedMessages() throws Exception {
+    // GIVEN: El fixture crea los topics con la configuración declarada en Compose.
     try (var admin = admin()) {
+      // WHEN
       var descriptions = admin.describeTopics(TOPICS).allTopicNames().get(20, TimeUnit.SECONDS);
       for (var topic : TOPICS) {
+        // THEN
         assertThat(descriptions.get(topic).partitions()).hasSize(2);
+
+        // WHEN
         var resource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
         var config =
             admin.describeConfigs(List.of(resource)).all().get(20, TimeUnit.SECONDS).get(resource);
+        // THEN
         assertThat(config.get("retention.ms").value()).isEqualTo("-1");
         assertThat(config.get("retention.bytes").value()).isEqualTo("-1");
       }
     }
 
+    // GIVEN
     var producerProperties = new Properties();
     producerProperties.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
     producerProperties.put(
         ProducerConfig.TRANSACTIONAL_ID_CONFIG, "f01-probe-" + UUID.randomUUID());
     producerProperties.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
     producerProperties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+    // WHEN
     try (var producer = new KafkaProducer<String, String>(producerProperties)) {
       producer.initTransactions();
       producer.beginTransaction();
@@ -164,6 +192,7 @@ class RuntimeInfrastructureIT {
       producer.abortTransaction();
     }
 
+    // GIVEN
     var consumerProperties = new Properties();
     consumerProperties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
     consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
@@ -171,6 +200,7 @@ class RuntimeInfrastructureIT {
     consumerProperties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
     consumerProperties.put(
         ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+    // WHEN
     try (var consumer = new KafkaConsumer<String, String>(consumerProperties)) {
       var partition = new TopicPartition(PROBE_TOPIC, 0);
       consumer.assign(List.of(partition));
@@ -181,6 +211,7 @@ class RuntimeInfrastructureIT {
       while (consumer.position(partition) < end && System.nanoTime() < deadline) {
         consumer.poll(Duration.ofMillis(250)).forEach(record -> values.add(record.value()));
       }
+      // THEN
       assertThat(consumer.position(partition)).isEqualTo(end);
       assertThat(values).containsExactly("committed");
     }

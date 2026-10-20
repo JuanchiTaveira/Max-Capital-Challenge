@@ -1,7 +1,7 @@
 package com.maxcapital.challenge;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.*;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
@@ -24,33 +24,55 @@ class OrderDomainTest {
 
   @Test
   void detectsDuplicateBeforeEvaluatingTerminalTransition() {
+    // GIVEN
     var repository = mock(OrderRepository.class);
     when(repository.lock(2)).thenReturn(stateAfterFill());
     when(repository.match(2, 1, "payload"))
         .thenReturn(Optional.of(new OrderRepository.ReportMatch(1, true)));
+    // WHEN
     new ProcessExecutionReport(repository, mock(ProcessingResults.class))
         .process(
             new InputPosition("unit-reports", 0, 0), report(OrderStatus.FILLED, 10, 0), "payload");
+    // THEN
     verify(repository, never()).save(any());
     verify(repository, never()).append(any(), any());
   }
 
   @Test
   void parsesDocumentedPayloadWithoutLosingFieldsOrDecimalPrecision() throws Exception {
-    var parsed =
-        parser.parse("13144742", Files.readAllBytes(Path.of("examples/execution-report.json")));
+    // GIVEN
+    var payload = Files.readAllBytes(Path.of("examples/execution-report.json"));
+
+    // WHEN
+    var parsed = parser.parse("13144742", payload);
+
+    // THEN
     assertThat(parsed.report().fixId()).isEqualTo(523130930000307L);
     assertThat(parsed.report().transactionTime()).isEqualTo("2026-07-20T18:08:52.129");
     assertThat(parsed.payload()).contains("secondaryTradeId", "executionPrice", "marketOrderId");
+    // GIVEN
     var decimal =
         json().replace("\"nominalAmounts\":10", "\"nominalAmounts\":999999999999.12345678");
-    assertThat(parse(decimal).nominalAmounts()).isEqualByComparingTo("999999999999.12345678");
+
+    // WHEN
+    var decimalReport = parse(decimal);
+
+    // THEN
+    assertThat(decimalReport.nominalAmounts()).isEqualByComparingTo("999999999999.12345678");
   }
 
   @Test
   void rejectsAmbiguousOrInvalidEnvelopes() {
-    assertThatThrownBy(() -> parser.parse("02", json().getBytes(StandardCharsets.UTF_8)))
-        .isInstanceOf(IllegalArgumentException.class);
+    // GIVEN
+    var payload = json().getBytes(StandardCharsets.UTF_8);
+
+    // WHEN
+    var invalidKey = catchThrowable(() -> parser.parse("02", payload));
+
+    // THEN
+    assertThat(invalidKey).isInstanceOf(IllegalArgumentException.class);
+
+    // GIVEN
     for (var invalid :
         new String[] {
           json().replace("\"fixId\":1,", ""),
@@ -62,42 +84,80 @@ class OrderDomainTest {
           json().replace("\"fixId\":1", "\"fixId\":1,\"fixId\":2"),
           json() + " {}"
         }) {
-      assertThatThrownBy(() -> parse(invalid)).isInstanceOf(RuntimeException.class);
+      // WHEN
+      var failure = catchThrowable(() -> parse(invalid));
+
+      // THEN
+      assertThat(failure).isInstanceOf(RuntimeException.class);
     }
   }
 
   @Test
   void computesStateFromPreviousStateAndSnapshots() {
+    // GIVEN
     var first = report(OrderStatus.NEW, 0, 10);
+
+    // WHEN
     var state = OrderState.initial(first).apply(first);
     state = state.apply(report(OrderStatus.PARTIALLY_FILLED, 3, 7));
     state = state.apply(report(OrderStatus.PARTIALLY_FILLED, 7, 3));
+    // THEN
     assertThat(state.accumulativeNominalAmount()).isEqualByComparingTo("7");
+
+    // WHEN
     state = state.apply(report(OrderStatus.FILLED, 10, 0));
+
+    // THEN
     assertThat(state.appliedExecutionCount()).isEqualTo(4);
-    assertThatThrownBy(() -> stateAfterFill().apply(report(OrderStatus.FILLED, 10, 0)))
-        .hasMessageContaining("transición inválida");
+
+    // WHEN
+    var failure = catchThrowable(() -> stateAfterFill().apply(report(OrderStatus.FILLED, 10, 0)));
+
+    // THEN
+    assertThat(failure).hasMessageContaining("transición inválida");
   }
 
   @Test
   void supportsCancellationAndRejectsMissingNewAndContradictorySnapshots() {
+    // GIVEN
     var first = report(OrderStatus.NEW, 0, 10);
     var state = OrderState.initial(first).apply(first);
-    assertThat(state.apply(report(OrderStatus.CANCELLED, 0, 0)).status())
-        .isEqualTo(OrderStatus.CANCELLED);
+    // WHEN
+    var cancelled = state.apply(report(OrderStatus.CANCELLED, 0, 0));
+
+    // THEN
+    assertThat(cancelled.status()).isEqualTo(OrderStatus.CANCELLED);
+
+    // GIVEN
     for (var invalid :
         new ExecutionReport[] {
           report(OrderStatus.FILLED, 9, 0),
           report(OrderStatus.PARTIALLY_FILLED, 3, 8),
           report(OrderStatus.NEW, 0, 10)
         }) {
-      assertThatThrownBy(() -> state.apply(invalid)).isInstanceOf(IllegalArgumentException.class);
+      // WHEN
+      var failure = catchThrowable(() -> state.apply(invalid));
+
+      // THEN
+      assertThat(failure).isInstanceOf(IllegalArgumentException.class);
     }
-    assertThatThrownBy(() -> OrderState.initial(first).apply(report(OrderStatus.FILLED, 10, 0)))
-        .isInstanceOf(IllegalArgumentException.class);
+
+    // WHEN
+    var missingNew =
+        catchThrowable(() -> OrderState.initial(first).apply(report(OrderStatus.FILLED, 10, 0)));
+
+    // THEN
+    assertThat(missingNew).isInstanceOf(IllegalArgumentException.class);
+
+    // GIVEN
     var partial = state.apply(report(OrderStatus.PARTIALLY_FILLED, 7, 3));
-    assertThatThrownBy(() -> partial.apply(report(OrderStatus.CANCELLED, 6, 0)))
-        .isInstanceOf(IllegalArgumentException.class);
+
+    // WHEN
+    var decreasingAccumulated =
+        catchThrowable(() -> partial.apply(report(OrderStatus.CANCELLED, 6, 0)));
+
+    // THEN
+    assertThat(decreasingAccumulated).isInstanceOf(IllegalArgumentException.class);
   }
 
   private static OrderState stateAfterFill() {

@@ -45,33 +45,52 @@ class EvaluationConsoleRuntimeIT {
   @Test
   @Order(2)
   void startsWithoutDependenciesAndDoesNotRegisterProcessingOrFlyway() throws Exception {
-    try (var app =
+    // GIVEN
+    var application =
         new SpringApplicationBuilder(MaxCapitalChallengeApplication.class)
-            .profiles("evaluation-console")
-            .run(
-                "--server.port=0",
-                "--spring.datasource.url=jdbc:postgresql://127.0.0.1:1/missing?connectTimeout=1",
-                "--spring.kafka.bootstrap-servers=127.0.0.1:1")) {
+            .profiles("evaluation-console");
+
+    // WHEN
+    try (var app =
+        application.run(
+            "--server.port=0",
+            "--spring.datasource.url=jdbc:postgresql://127.0.0.1:1/missing?connectTimeout=1",
+            "--spring.kafka.bootstrap-servers=127.0.0.1:1")) {
+      // THEN
       assertThat(app.getBeansOfType(ExecutionReportListener.class)).isEmpty();
       assertThat(app.getBeansOfType(Flyway.class)).isEmpty();
       var port = app.getEnvironment().getRequiredProperty("local.server.port");
-      assertThat(get(port, "/").body()).contains("Consola de evaluación");
-      assertThat(get(port, "/actuator/health/readiness").statusCode()).isEqualTo(200);
+      // WHEN
+      var page = get(port, "/");
+
+      // THEN
+      assertThat(page.body()).contains("Consola de evaluación");
+
+      // WHEN
+      var readiness = get(port, "/actuator/health/readiness");
+
+      // THEN
+      assertThat(readiness.statusCode()).isEqualTo(200);
     }
   }
 
   @Test
   @Order(1)
   void doesNotMigrateAnEmptyDatabase() {
-    try (var app =
+    // GIVEN
+    var application =
         new SpringApplicationBuilder(MaxCapitalChallengeApplication.class)
-            .profiles("evaluation-console")
-            .run(
-                "--server.port=0",
-                "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
-                "--spring.datasource.username=" + POSTGRES.getUsername(),
-                "--spring.datasource.password=" + POSTGRES.getPassword(),
-                "--spring.kafka.bootstrap-servers=127.0.0.1:1")) {
+            .profiles("evaluation-console");
+
+    // WHEN
+    try (var app =
+        application.run(
+            "--server.port=0",
+            "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
+            "--spring.datasource.username=" + POSTGRES.getUsername(),
+            "--spring.datasource.password=" + POSTGRES.getPassword(),
+            "--spring.kafka.bootstrap-servers=127.0.0.1:1")) {
+      // THEN
       assertThat(
               app.getBean(JdbcTemplate.class)
                   .queryForObject(
@@ -84,17 +103,20 @@ class EvaluationConsoleRuntimeIT {
   @Test
   @Order(3)
   void keepsExactlyTwoConsumersAndObservesStoppedListenerSeparatelyFromHttp() throws Exception {
+    // GIVEN
     try (var admin = AdminClient.create(Map.of("bootstrap.servers", KAFKA.getBootstrapServers()))) {
       admin
           .createTopics(List.of(new NewTopic("execution-reports", 2, (short) 1)))
           .all()
           .get(20, TimeUnit.SECONDS);
+      // WHEN
       try (var first = application("first", true);
           var second = application("second", false);
           var console =
               new SpringApplicationBuilder(MaxCapitalChallengeApplication.class)
                   .profiles("evaluation-console")
                   .run(arguments("console", false))) {
+        // THEN: El grupo converge a dos consumidores, con una partición por aplicación.
         await()
             .atMost(Duration.ofSeconds(45))
             .untilAsserted(
@@ -112,33 +134,68 @@ class EvaluationConsoleRuntimeIT {
                           member -> assertThat(member.assignment().topicPartitions()).hasSize(1));
                 });
         for (int i = 0; i < 3; i++) {
-          assertThat(get(port(console), "/").statusCode()).isEqualTo(200);
-          assertThat(get(port(first), "/internal/demo/consumer").body())
-              .contains("\"running\":true");
+          // WHEN
+          var page = get(port(console), "/");
+
+          // THEN
+          assertThat(page.statusCode()).isEqualTo(200);
+
+          // WHEN
+          var consumer = get(port(first), "/internal/demo/consumer");
+
+          // THEN
+          assertThat(consumer.body()).contains("\"running\":true");
         }
-        assertThat(
-                new tools.jackson.databind.json.JsonMapper()
-                    .readTree(get(port(first), "/internal/demo/consumer").body())
-                    .path("clientId")
-                    .asString())
-            .contains("first");
-        assertThat(
-                admin
-                    .describeConsumerGroups(List.of("console-runtime-it"))
-                    .all()
-                    .get()
-                    .get("console-runtime-it")
-                    .members())
-            .hasSize(2);
-        assertThat(get(port(first), "/").statusCode()).isEqualTo(404);
-        assertThat(get(port(second), "/internal/demo/consumer").statusCode()).isEqualTo(404);
+        // WHEN
+        var observed = get(port(first), "/internal/demo/consumer");
+        var clientId =
+            new tools.jackson.databind.json.JsonMapper()
+                .readTree(observed.body())
+                .path("clientId")
+                .asString();
+
+        // THEN
+        assertThat(clientId).contains("first");
+
+        // WHEN
+        var members =
+            admin
+                .describeConsumerGroups(List.of("console-runtime-it"))
+                .all()
+                .get()
+                .get("console-runtime-it")
+                .members();
+
+        // THEN
+        assertThat(members).hasSize(2);
+
+        // WHEN
+        var applicationPage = get(port(first), "/");
+
+        // THEN
+        assertThat(applicationPage.statusCode()).isEqualTo(404);
+
+        // WHEN
+        var disabledObservation = get(port(second), "/internal/demo/consumer");
+
+        // THEN
+        assertThat(disabledObservation.statusCode()).isEqualTo(404);
+
+        // WHEN
         first
             .getBean(KafkaListenerEndpointRegistry.class)
             .getListenerContainer("execution-reports")
             .stop();
-        assertThat(get(port(first), "/internal/demo/consumer").body())
-            .contains("\"running\":false");
-        assertThat(get(port(first), "/actuator/health/readiness").statusCode()).isEqualTo(200);
+        var stoppedConsumer = get(port(first), "/internal/demo/consumer");
+
+        // THEN
+        assertThat(stoppedConsumer.body()).contains("\"running\":false");
+
+        // WHEN
+        var readiness = get(port(first), "/actuator/health/readiness");
+
+        // THEN
+        assertThat(readiness.statusCode()).isEqualTo(200);
       }
     }
   }

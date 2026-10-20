@@ -146,13 +146,23 @@ class DemoScenariosIT {
 
   @Test
   void executesAvailableWithRealKafkaSqlAndTwoInstancesAndKeepsPendingExcluded() throws Exception {
+    // GIVEN: Dos aplicaciones reales comparten Kafka y PostgreSQL; Docker está sustituido.
+    // WHEN
     var pending = post("/runs", Map.of("scenario", "settlement-once", "mode", "automatic"));
+
+    // THEN
     assertThat(pending.statusCode()).isEqualTo(409);
     verifyNoInteractions(docker);
+    // WHEN
     var response = post("/runs", Map.of("scenario", "available", "mode", "automatic"));
+
+    // THEN
     assertThat(response.statusCode()).isEqualTo(200);
+
+    // WHEN
     String id = json.readTree(response.body()).path("id").asString();
     var state = terminal(id);
+    // THEN
     assertThat(state.path("status").asString())
         .describedAs(state.toPrettyString())
         .isEqualTo("PASSED");
@@ -167,22 +177,45 @@ class DemoScenariosIT {
 
   @Test
   void resumesStepRunByIdRejectsConcurrentMutationsAndPreservesEffectsOnCancel() throws Exception {
+    // GIVEN: El runner y las dos aplicaciones están iniciados por el fixture.
+    // WHEN
     var response = post("/runs", Map.of("scenario", "terminal-duplicates", "mode", "step"));
     String id = json.readTree(response.body()).path("id").asString();
     waiting(id, 1);
-    assertThat(get("/runs/" + id).statusCode()).isEqualTo(200);
-    assertThat(
-            post("/runs", Map.of("scenario", "quantity-snapshots", "mode", "automatic"))
-                .statusCode())
-        .isEqualTo(409);
-    assertThat(post("/reports", Map.of()).statusCode()).isEqualTo(409);
-    assertThat(post("/runs/" + id + "/next", Map.of()).statusCode()).isEqualTo(200);
+    var recovered = get("/runs/" + id);
+
+    // THEN
+    assertThat(recovered.statusCode()).isEqualTo(200);
+
+    // WHEN
+    var concurrentRun =
+        post("/runs", Map.of("scenario", "quantity-snapshots", "mode", "automatic"));
+
+    // THEN
+    assertThat(concurrentRun.statusCode()).isEqualTo(409);
+
+    // WHEN
+    var concurrentPublication = post("/reports", Map.of());
+
+    // THEN
+    assertThat(concurrentPublication.statusCode()).isEqualTo(409);
+
+    // WHEN
+    var next = post("/runs/" + id + "/next", Map.of());
+
+    // THEN
+    assertThat(next.statusCode()).isEqualTo(200);
+
+    // WHEN
     waiting(id, 2);
     post("/runs/" + id + "/next", Map.of());
     var paused = waiting(id, 3);
     String order = paused.path("orders").get(0).asString();
     post("/runs/" + id + "/cancel", Map.of());
-    assertThat(terminal(id).path("status").asString()).isEqualTo("CANCELLED");
+    var cancelled = terminal(id);
+
+    // THEN
+    assertThat(cancelled.path("status").asString()).isEqualTo("CANCELLED");
     assertThat(
             jdbc.queryForObject(
                 "SELECT applied_execution_count FROM app.orders WHERE numeric_order_id=?",
@@ -193,12 +226,15 @@ class DemoScenariosIT {
 
   @Test
   void exposesTimeoutWithLastDiagnosisAndNoDataLoss() throws Exception {
+    // GIVEN
     doThrow(new IllegalStateException("Falla transitoria visible"))
         .when(instances)
         .read("app-1", "/internal/demo/consumer");
+    // WHEN
     var response = post("/runs", Map.of("scenario", "quantity-snapshots", "mode", "automatic"));
     String id = json.readTree(response.body()).path("id").asString();
     var state = terminal(id);
+    // THEN
     assertThat(state.path("status").asString()).isEqualTo("FAILED");
     assertThat(state.path("error").asString()).contains("plazo", "Falla transitoria visible");
     assertThat(state.path("orders").size()).isZero();
@@ -206,11 +242,14 @@ class DemoScenariosIT {
 
   @Test
   void restoresOwnedServicesWhenRestartFails() throws Exception {
+    // GIVEN
     when(docker.control("app-2", "restart"))
         .thenThrow(new IllegalStateException("Reinicio fallido controlado"));
+    // WHEN
     var response = post("/runs", Map.of("scenario", "restart-persistence", "mode", "automatic"));
     String id = json.readTree(response.body()).path("id").asString();
     var state = terminal(id);
+    // THEN
     assertThat(state.path("status").asString()).isEqualTo("FAILED");
     assertThat(state.path("error").asString()).contains("Reinicio fallido controlado");
     verify(docker).control("app-1", "start");

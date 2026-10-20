@@ -1,7 +1,7 @@
 package com.maxcapital.challenge;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.awaitility.Awaitility.await;
 
 import com.maxcapital.challenge.demo.ConsoleKafka;
@@ -93,30 +93,41 @@ class DemoPublishingIT {
 
   @Test
   void publishesAndRepublishesExactTerminalAndRejectsKnownInvalidDrafts() throws Exception {
+    // GIVEN
     String key = "81001", initial = TestInfrastructure.report(81001, 1, "NEW", 0, 10);
+
+    // WHEN
     var first = post("/reports", Map.of("key", key, "payload", initial));
+
+    // THEN
     assertThat(first.statusCode()).isEqualTo(200);
     var metadata = json.readTree(first.body());
     applied(key, 1);
+    // WHEN
     var terminal =
         post(
             "/reports",
             Map.of("key", key, "payload", TestInfrastructure.report(81001, 2, "FILLED", 10, 0)));
+    // THEN
     assertThat(terminal.statusCode()).isEqualTo(200);
     applied(key, 2);
     var terminalMetadata = json.readTree(terminal.body());
-    assertThat(
-            post(
-                    "/messages/republication",
-                    Map.of(
-                        "topic",
-                        "execution-reports",
-                        "partition",
-                        terminalMetadata.path("partition").asInt(),
-                        "offset",
-                        terminalMetadata.path("offset").asString()))
-                .statusCode())
-        .isEqualTo(200);
+    // WHEN
+    var terminalRepublication =
+        post(
+            "/messages/republication",
+            Map.of(
+                "topic",
+                "execution-reports",
+                "partition",
+                terminalMetadata.path("partition").asInt(),
+                "offset",
+                terminalMetadata.path("offset").asString()));
+
+    // THEN
+    assertThat(terminalRepublication.statusCode()).isEqualTo(200);
+
+    // WHEN
     var repeated =
         post(
             "/messages/republication",
@@ -127,6 +138,7 @@ class DemoPublishingIT {
                 metadata.path("partition").asInt(),
                 "offset",
                 metadata.path("offset").asString()));
+    // THEN
     assertThat(repeated.statusCode()).isEqualTo(200);
     var duplicate = json.readTree(repeated.body());
     assertThat(duplicate.path("payload").asString()).isEqualTo(initial);
@@ -149,11 +161,18 @@ class DemoPublishingIT {
             "{",
             initial.replace("VSCPC", "OTHER"),
             TestInfrastructure.report(81001, 3, "FILLED", 10, 0))) {
-      assertThat(post("/reports", Map.of("key", key, "payload", payload)).statusCode())
-          .isEqualTo(400);
+      // WHEN
+      var invalid = post("/reports", Map.of("key", key, "payload", payload));
+
+      // THEN
+      assertThat(invalid.statusCode()).isEqualTo(400);
     }
-    assertThat(post("/reports", Map.of("key", "81002", "payload", initial)).statusCode())
-        .isEqualTo(400);
+
+    // WHEN
+    var mismatchedKey = post("/reports", Map.of("key", "81002", "payload", initial));
+
+    // THEN
+    assertThat(mismatchedKey.statusCode()).isEqualTo(400);
     assertThat(
             jdbc.queryForObject(
                 "SELECT count(*) FROM app.processing_results WHERE numeric_order_id=81001",
@@ -163,6 +182,7 @@ class DemoPublishingIT {
 
   @Test
   void preservesExactNumericPayloadAcrossPublicationInspectionAndRepublication() throws Exception {
+    // GIVEN
     String key = "9223372036854775806";
     String payload =
         """
@@ -170,18 +190,24 @@ class DemoPublishingIT {
         "nominalAmounts":999999999999.12345678,"leavesNominalAmount":999999999999.12345678,
         "accumulativeNominalAmount":0,"transactionTime":"2026-07-20T18:08:52.129","extra":"intacto"}
         """;
+    // WHEN
     var response = post("/reports", Map.of("key", key, "payload", payload));
+
+    // THEN
     assertThat(response.statusCode()).isEqualTo(200);
     applied(key, 1);
     var position = json.readTree(response.body());
-    assertThat(
-            kafka
-                .exact(
-                    "execution-reports",
-                    position.path("partition").asInt(),
-                    position.path("offset").asString())
-                .payload())
-        .isEqualTo(payload);
+    // WHEN
+    var inspected =
+        kafka.exact(
+            "execution-reports",
+            position.path("partition").asInt(),
+            position.path("offset").asString());
+
+    // THEN
+    assertThat(inspected.payload()).isEqualTo(payload);
+
+    // WHEN
     var repeated =
         post(
             "/messages/republication",
@@ -192,6 +218,7 @@ class DemoPublishingIT {
                 position.path("partition").asInt(),
                 "offset",
                 position.path("offset").asString()));
+    // THEN
     assertThat(repeated.statusCode()).isEqualTo(200);
     assertThat(json.readTree(repeated.body()).path("payload").asString()).isEqualTo(payload);
     assertThat(
@@ -205,6 +232,7 @@ class DemoPublishingIT {
   @Test
   void readsCommittedWithGapsAndDoesNotChangeGroupMembershipOrReplayAbortedPosition()
       throws Exception {
+    // GIVEN
     String key = "82001";
     var first = kafka.transaction(key, TestInfrastructure.report(82001, 1, "NEW", 0, 10), false);
     applied(key, 1);
@@ -212,10 +240,14 @@ class DemoPublishingIT {
         kafka.transaction(key, TestInfrastructure.report(82001, 2, "PARTIALLY_FILLED", 7, 3), true);
     var last = kafka.transaction(key, TestInfrastructure.report(82001, 3, "FILLED", 10, 0), false);
     applied(key, 2);
+    // WHEN
     var page = kafka.read(first.topic(), Integer.parseInt(first.partition()), first.offset(), 1);
     @SuppressWarnings("unchecked")
     var records = (List<ConsoleKafka.Record>) page.get("records");
+    // THEN
     assertThat(records).containsExactly(first);
+
+    // WHEN
     var next =
         kafka.read(
             first.topic(),
@@ -224,11 +256,18 @@ class DemoPublishingIT {
             200);
     @SuppressWarnings("unchecked")
     var remaining = (List<ConsoleKafka.Record>) next.get("records");
+    // THEN
     assertThat(remaining).contains(last).doesNotContain(aborted);
-    assertThatThrownBy(
+
+    // WHEN
+    var abortedPosition =
+        catchThrowable(
             () ->
                 kafka.exact(
-                    aborted.topic(), Integer.parseInt(aborted.partition()), aborted.offset()))
+                    aborted.topic(), Integer.parseInt(aborted.partition()), aborted.offset()));
+
+    // THEN
+    assertThat(abortedPosition)
         .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     assertThat(
             jdbc.queryForObject(
@@ -251,12 +290,15 @@ class DemoPublishingIT {
 
   @Test
   void reportsUnavailableAcknowledgementWithoutInventingMetadata() {
-    assertThatThrownBy(
-            () ->
-                new ConsoleKafka("127.0.0.1:1")
-                    .publish("1", TestInfrastructure.report(1, 1, "NEW", 0, 10)))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("incierto");
+    // GIVEN
+    var unavailableKafka = new ConsoleKafka("127.0.0.1:1");
+    var payload = TestInfrastructure.report(1, 1, "NEW", 0, 10);
+
+    // WHEN
+    var failure = catchThrowable(() -> unavailableKafka.publish("1", payload));
+
+    // THEN
+    assertThat(failure).isInstanceOf(IllegalStateException.class).hasMessageContaining("incierto");
   }
 
   void applied(String key, long count) {
