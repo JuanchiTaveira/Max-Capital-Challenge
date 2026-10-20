@@ -15,22 +15,27 @@ public class ProcessExecutionReport {
     this.results = results;
   }
 
+  // Estado, contador, ledger y resultado comparten el commit SQL; Kafka se confirma aparte.
   @Transactional("orderTransactionManager")
   public ProcessingResult process(InputPosition position, ExecutionReport report, String payload) {
+    // Una reentrega recupera el resultado y snapshot originales, aunque la orden haya avanzado.
     var stored = results.find(position, payload);
     if (stored.isPresent()) {
       return recover(report, stored.get());
     }
     repository.initialize(report);
+    // El lock serializa las modificaciones de esta orden hasta completar la transacción SQL.
     var previous = repository.lock(report.numericOrderId());
     // Otra transacción pudo confirmar esta posición mientras esperábamos el lock.
     stored = results.find(position, payload);
     if (stored.isPresent()) {
       return recover(report, stored.get());
     }
+    // Deduplicamos antes de validar transiciones para aceptar también terminales ya aplicados.
     var match = repository.match(report.numericOrderId(), report.fixId(), payload);
     ProcessingResult result;
     if (match.isPresent()) {
+      // Reutilizar fixId con otro contenido es un conflicto de identidad, no un duplicado.
       if (!match.get().identical()) {
         throw new IllegalArgumentException("contenido distinto para fixId " + report.fixId());
       }
@@ -43,6 +48,7 @@ public class ProcessExecutionReport {
               match.get().ledgerId(),
               previous);
     } else {
+      // Sólo un ER nuevo aplica la transición, incrementa el contador y agrega ledger.
       var next = previous.apply(report);
       repository.save(next);
       long ledgerId = repository.append(report, payload);
@@ -50,6 +56,7 @@ public class ProcessExecutionReport {
           new ProcessingResult(
               position, Outcome.APPLIED, report.numericOrderId(), report.fixId(), ledgerId, next);
     }
+    // Cada posición nueva conserva su resultado y snapshot en la misma transacción SQL.
     results.insert(result);
     return result;
   }
@@ -57,6 +64,7 @@ public class ProcessExecutionReport {
   private static ProcessingResult recover(
       ExecutionReport report, ProcessingResults.StoredResult stored) {
     var result = stored.result();
+    // La posición sólo puede recuperar un resultado del mismo ER y con contenido equivalente.
     if (!stored.identicalReport()
         || result.numericOrderId() != report.numericOrderId()
         || result.fixId() != report.fixId()) {
