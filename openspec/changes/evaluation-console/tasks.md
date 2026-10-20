@@ -1,9 +1,8 @@
 # Tasks
 
-Todos los ítems corresponden a implementación futura. Conservar cambios ajenos,
-formatear Java editado con Spotless y generar commits locales coherentes con
-Conventional Commits. Los comandos `verify-console` y las clases de pruebas citadas
-abajo son entregables por incorporar, no herramientas que ya existan.
+Los ítems marcados tienen implementación y evidencia observada, registrada en
+`verification.md`. Se conservan cambios ajenos y datos previos, con formato
+Spotless y commits locales coherentes con Conventional Commits.
 
 ## 1. Proceso de consola y observación de instancias
 
@@ -56,10 +55,10 @@ abajo son entregables por incorporar, no herramientas que ya existan.
 
 ## 7. Verificación integrada y evidencia
 
-- [ ] 7.1 Incorporar el smoke portable `verify-console` al perfil tools, usando la API real de consola para ejecutar disponibles y controlar sólo servicios del proyecto, incluyendo stop/start de dependencias y kill/start de una aplicación; verificar con `docker compose --profile tools run --build --rm verify-console` que hay diagnóstico por falla, consola operativa, servicios restaurados y datos conservados, sin declarar verificación de fronteras F-05.
-- [ ] 7.2 Ejecutar `.\mvnw.cmd spotless:apply`, `.\mvnw.cmd spotless:check` y `.\mvnw.cmd verify` con Docker, incluyendo las integraciones nuevas y regresiones existentes; verificar éxito sin omisiones y registrar comando, entorno y resultados, sin sustituirlos por un build de imagen.
-- [ ] 7.3 Ejecutar secuencialmente `docker compose --profile tools run --build --rm verify-f02` y el nuevo smoke `verify-console`, además de la revisión de UI del grupo 6; verificar exactamente dos consumidores, concordancia HTTP, persistencia, controles del proyecto y conservación de datos anteriores.
-- [ ] 7.4 Registrar correspondencia entre todos los escenarios de las delta specs y evidencia observada en `verification.md`, actualizar la fila propia de consola en README sólo si pasó y conservar estados pendientes de F-04/F-05/F-06; verificar `openspec validate --all --strict`, `git diff --check` y el diff final de documentación antes de declarar completa la implementación.
+- [x] 7.1 Incorporar el smoke portable `verify-console` al perfil tools, usando la API real de consola para ejecutar disponibles y controlar sólo servicios del proyecto, incluyendo stop/start de dependencias y kill/start de una aplicación; verificar con `docker compose --profile tools run --build --rm verify-console` que hay diagnóstico por falla, consola operativa, servicios restaurados y datos conservados, sin declarar verificación de fronteras F-05.
+- [x] 7.2 Ejecutar `.\mvnw.cmd spotless:apply`, `.\mvnw.cmd spotless:check` y `.\mvnw.cmd verify` con Docker, incluyendo las integraciones nuevas y regresiones existentes; verificar éxito sin omisiones y registrar comando, entorno y resultados, sin sustituirlos por un build de imagen.
+- [x] 7.3 Ejecutar secuencialmente `docker compose --profile tools run --build --rm verify-f02` y el nuevo smoke `verify-console`, además de la revisión de UI del grupo 6; verificar exactamente dos consumidores, concordancia HTTP, persistencia, controles del proyecto y conservación de datos anteriores.
+- [x] 7.4 Registrar correspondencia entre todos los escenarios de las delta specs y evidencia observada en `verification.md`, actualizar la fila propia de consola en README sólo si pasó y conservar estados pendientes de F-04/F-05/F-06; verificar `openspec validate --all --strict`, `git diff --check` y el diff final de documentación antes de declarar completa la implementación.
 
 ## Workflow follow-up
 

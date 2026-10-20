@@ -149,6 +149,21 @@ services:
         bind:
           create_host_path: false
 
+  verify-console:
+    profiles: ["tools"]
+    image: max-capital-challenge-smoke:0.1.0-SNAPSHOT
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.smoke
+    entrypoint: ["python", "-u", "/smoke/verify-console.py"]
+    depends_on:
+      app-1:
+        condition: service_healthy
+      app-2:
+        condition: service_healthy
+      evaluation-console:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   kafka-data:
