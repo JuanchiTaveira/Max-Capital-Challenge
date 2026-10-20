@@ -99,8 +99,11 @@ de este ejercicio. Se pueden cambiar con `POSTGRES_DB`, `POSTGRES_USER` y
 
 ## Consola de evaluación
 
-La consola se levanta con el mismo `docker compose up --build`, en
-http://localhost:8083. Ofrece cuatro vistas: escenarios, mensajes, órdenes y sistema.
+El paquete Java `demo` contiene las herramientas y escenarios para evaluar la
+aplicación. Los recursos de la interfaz web están en `src/main/resources/demo`.
+Para acceder, ejecutar `docker compose up --build` y abrir
+[http://localhost:8083](http://localhost:8083). La consola ofrece cuatro vistas:
+escenarios, mensajes, órdenes y sistema.
 Su proceso usa el perfil `evaluation-console`, no participa del grupo de órdenes
 ni ejecuta migraciones, y mantiene su salud propia aunque SQL, Kafka o una
 aplicación no respondan. Las aplicaciones exponen observación de sus listeners
