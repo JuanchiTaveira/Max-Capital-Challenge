@@ -221,3 +221,35 @@ Kafka conservan commits independientes y todavía no se publica ninguna salida.
 F-04 debe definir los datos de salida y coordinar publicación/progreso Kafka;
 F-05 debe comprobar qué observa un consumidor downstream `read_committed` ante
 caídas y rebalanceos. Actualmente `read_committed` sólo controla la entrada.
+
+## 10. Consola local de evaluación
+
+Por pedido explícito se agrega una herramienta de evaluación al alcance del
+challenge. La exclusión general de UI se mantiene para una interfaz de producto:
+esta consola permite observar el núcleo y reproducir pruebas desde el navegador.
+El README conserva el estado de implementación de esta feature.
+
+Se reutiliza el artefacto Java bajo un perfil exclusivo en un proceso Compose
+independiente. Esto evita perder la consola al detener una instancia y aprovecha
+las dependencias Kafka/JDBC existentes. Se excluyen listener y Flyway del perfil,
+y las aplicaciones sólo agregan observación de consumo habilitada en demo.
+La integración de runtime verifica que siguen existiendo exactamente dos miembros
+del grupo y que HTTP saludable no implica listener en ejecución.
+
+La imagen de consola incorpora la CLI fijada y acceso al socket Docker local;
+las imágenes de aplicación conservan su usuario y no incluyen ese acceso. El
+socket otorga control del motor: la restricción de acciones de la API no es un
+aislamiento del permiso real. La API limita servicios, acciones y proyecto,
+rechaza mutaciones de otro origen y acota diagnósticos; no admite comandos libres
+ni borrados. Los logs son diagnóstico temporal, no errores persistidos de F-06.
+Una acción manual kill permite explorar fallas, pero no posiciona la caída entre
+commits ni certifica recuperación F-05. Los escenarios completos requieren su
+propia evidencia antes de atribuirles garantías.
+
+La consola representa identificadores y cantidades como cadenas y conserva el
+JSON del ER como texto en el navegador. Las consultas públicas mantienen su
+contrato numérico; las comparaciones entre instancias se resuelven en Java. Se
+verificaron IDs fuera del rango seguro de JavaScript y ocho decimales exactos.
+Las escrituras de negocio ingresan por Kafka: las consultas de consola no alteran
+estado, ledger ni resultados. Su preflight usa un snapshot y no reemplaza la
+validación final del consumidor ante publicaciones concurrentes.

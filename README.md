@@ -12,14 +12,20 @@ conserva el resultado de cada posición Kafka resuelta para recuperarlo en reent
 Ejecutar los comandos desde la raíz del repositorio, con Docker activo:
 
 1. [Levantar el entorno](#ejecutar): `docker compose up --build`.
-2. [Generar órdenes y verificar ambas instancias](#emitir-er-de-prueba-órdenes-intercaladas-y-duplicados): `docker compose --profile tools run --build --rm verify-f02`. Al terminar imprime los IDs creados y sus URLs; conserva los datos para inspección.
-3. [Consultar el estado actual por HTTP](#consultar-una-orden): abrir `http://localhost:8081/orders/{numericOrderId}` con uno de esos IDs. El puerto `8082` permite consultar desde la otra instancia.
-4. [Ver tablas en DBeaver](#conectar-postgresql-desde-dbeaver) y [consultar estado, ledger y resultados con SQL](#consultar-las-tablas-con-sql).
-5. [Leer los mensajes de Kafka](#ver-los-mensajes-de-kafka) con key, partición y offset.
+2. Abrir [la consola de evaluación](http://localhost:8083), elegir modo **Automático** y pulsar **Ejecutar disponibles**. Cada paso muestra lo esperado, lo observado y su evidencia. Los escenarios pendientes se informan por separado.
+3. Usar **Ver orden** en la ejecución para inspeccionar estado, cantidades y ledger. En **Envíos y posiciones**, pulsar **Inspeccionar** para ver el JSON, la posición Kafka y su resultado SQL histórico. **Republicar exactamente** permite comprobar DUPLICATE.
+4. En **Mensajes**, probar el editor con **Nuevo ejemplo NEW**, publicar y esperar APPLIED; luego elegir **Ejemplo FILLED para esta key** y publicar. En modo **Paso a paso**, usar **Continuar paso**; recargar conserva el avance por URL mientras la consola siga ejecutándose.
+5. En **Sistema**, observar salud, consumo, asignaciones y offsets; detener/iniciar o terminar abruptamente una aplicación desde sus controles. Las caídas entre commits, settlement y recuperación de mensajes permanentes continúan pendientes de F-04 a F-06.
 
-Para comprobar paso a paso la idempotencia y persistencia, seguir la
-[prueba manual de F-03](#prueba-manual-de-f-03-en-powershell). El entorno no incluye
-interfaces web de Kafka ni PostgreSQL; DBeaver es un cliente externo opcional.
+El evaluador sólo necesita Docker y un navegador. La verificación portable por API
+se ejecuta con `docker compose --profile tools run --build --rm verify-console`:
+también prueba caídas de dependencias y restaura los servicios, conservando datos.
+Ejecutar los smokes de a uno sobre este entorno de demo.
+
+También se conservan el [smoke F-02](#emitir-er-de-prueba-órdenes-intercaladas-y-duplicados),
+la [consulta HTTP](#consultar-una-orden), la [prueba manual F-03](#prueba-manual-de-f-03-en-powershell),
+las [consultas SQL](#consultar-las-tablas-con-sql) y la [lectura Kafka por CLI](#ver-los-mensajes-de-kafka).
+DBeaver es un cliente externo opcional para inspeccionar tablas fuera de la consola.
 
 ## Features
 
@@ -35,11 +41,12 @@ Esta tabla es la única fuente del estado de implementación.
 | F-06 | Cuarentena y recuperación ordenada | Pendiente |
 | F-07 | Entrega reproducible y documentación | Pendiente |
 | F-08 | Integración continua — opcional | Pendiente |
+| F-09 | Consola local de evaluación | Implementado |
 
 ## Prerrequisitos y versiones
 
 Para ejecutar: Docker con contenedores Linux y Docker Compose, acceso a internet en
-el primer build y puertos 8081, 8082, 9092 y 15432 disponibles. Reservar al menos
+el primer build y puertos 8081, 8082, 8083, 9092 y 15432 disponibles. Reservar al menos
 4 GB de RAM para Docker. Java y Maven del host no son necesarios para Compose.
 
 Para desarrollar y ejecutar Testcontainers: JDK 25, Docker y Maven Wrapper incluido.
@@ -72,6 +79,7 @@ de cambiar fuentes, usar `--build` para reconstruirla.
 | --- | --- |
 | app-1 | http://localhost:8081 |
 | app-2 | http://localhost:8082 |
+| Consola de evaluación | http://localhost:8083 |
 | Kafka | localhost:9092 |
 | PostgreSQL | localhost:15432 |
 
@@ -88,6 +96,78 @@ La base, usuario y contraseña de demostración son `orders`. Son valores locale
 de este ejercicio. Se pueden cambiar con `POSTGRES_DB`, `POSTGRES_USER` y
 `POSTGRES_PASSWORD`. Las aplicaciones locales aceptan `DB_URL`, `DB_USER`,
 `DB_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS`, `INSTANCE_ID` y `SERVER_PORT`.
+
+## Consola de evaluación
+
+La consola se levanta con el mismo `docker compose up --build`, en
+http://localhost:8083. Ofrece cuatro vistas: escenarios, mensajes, órdenes y sistema.
+Su proceso usa el perfil `evaluation-console`, no participa del grupo de órdenes
+ni ejecuta migraciones, y mantiene su salud propia aunque SQL, Kafka o una
+aplicación no respondan. Las aplicaciones exponen observación de sus listeners
+sólo con `APP_DEMO_OBSERVATION_ENABLED=true`, configurado en Compose.
+
+Sólo el contenedor de consola incorpora la CLI Docker y monta el socket del motor
+Linux, igual que el smoke existente. No requiere Java, Maven, Node ni clientes SQL
+en el host. El socket se configura mediante `SMOKE_DOCKER_SOCKET` si es necesario.
+El resto de las aplicaciones conserva sus permisos e interfaces habituales.
+
+Las consultas de consola distinguen el estado actual de la orden del snapshot
+histórico de cada posición `(topic, partition, offset)`. `Sin resultado registrado`
+no significa necesariamente error: puede ser un registro todavía no intentado.
+El contador cuenta ER aplicados, incluidos NEW y terminales; no títulos operados.
+El ledger completo se ordena por `ledgerId` y se obtiene junto al estado en el
+mismo snapshot SQL. Las lecturas de SQL, Kafka y HTTP pueden observar momentos
+distintos y muestran su fuente y fecha; un dato anterior tras un error es stale.
+
+La API propia `/demo/api/orders` lista órdenes con límite y cursor;
+`/demo/api/orders/{id}` expone el detalle y `/demo/api/results` consulta la tupla
+Kafka completa. Sus IDs y cantidades son cadenas para evitar redondeos del
+navegador. El contrato numérico público de `/orders/{id}` no cambia. Un duplicado
+tardío del NEW puede referir al ledger de NEW y conservar snapshot FILLED, mientras
+el resultado de la posición original mantiene snapshot NEW.
+
+La publicación manual valida JSON, key e incompatibilidades conocidas de identidad
+y transición antes de enviar. Es un preflight sobre un snapshot: otro productor
+puede cambiar la orden después, y la validación definitiva sigue en el consumidor.
+Una posición confirmada por Kafka no implica que SQL haya aplicado el ER; ambas
+etapas se muestran separadas. Ante confirmación incierta no se reenvía automáticamente.
+Republicar conserva key y payload y crea otro offset; no fuerza reentrega de la
+misma posición ni resetea offsets. Los mensajes se leen como `read_committed` por
+partición, sin participar del grupo de órdenes; puede haber huecos legítimos por
+transacciones abortadas. Los topics de salida vacíos no prueban garantías pendientes.
+
+Los controles locales permiten start/stop/restart de app-1, app-2, PostgreSQL y
+Kafka, y kill abrupto sólo de las aplicaciones. Resuelven exclusivamente un
+contenedor del proyecto Compose, incluyendo los detenidos; rechazan destinos
+ambiguos o ajenos. No admiten comandos libres, borrados de volúmenes/topics ni
+resets de offsets. Las mutaciones requieren JSON y origen local de la consola.
+El socket otorga acceso al motor y debe usarse sólo en esta demo local.
+
+Detener PostgreSQL o Kafka puede detener los consumidores: iniciar primero la
+dependencia y luego reiniciar las aplicaciones desde la consola. Si falta acceso
+al socket, los controles y logs lo informan, y las lecturas independientes siguen
+disponibles. La salud HTTP y el estado del consumidor son observaciones distintas;
+las asignaciones actuales no identifican quién procesó un resultado histórico.
+El lag cuenta posiciones Kafka, que también pueden incluir registros de control
+transaccional: no equivale necesariamente a cantidad de ER pendientes.
+
+El catálogo ofrece órdenes intercaladas, snapshots con reloj no creciente,
+duplicados terminales/tardíos, persistencia después de reiniciar y visibilidad de
+transacciones confirmadas/abortadas. Cada escenario informa precondiciones,
+resultado esperado y verificaciones reales; `Ejecutar disponibles` recorre sólo
+esos cinco y deja explícitos los pendientes de F-04/F-05/F-06. La consola no emite
+poison intencional ni certifica settlement o caídas entre commits.
+
+Sólo se admite una ejecución activa. El modo paso a paso permite inspeccionar
+cada etapa y continuar, incluso tras recargar la página por su URL. Los pasos de
+recuperación tienen plazo de 150 segundos; una pausa manual vence a los 30 minutos.
+Cancelar conserva efectos confirmados y evita los próximos envíos; se intentan
+restaurar los servicios que la propia ejecución alteró. Se generan órdenes nuevas
+y se conserva evidencia SQL/Kafka de cada repetición, sin borrar datos previos.
+El historial de hasta 50 ejecuciones vive en memoria: reiniciar la consola pierde
+esa coordinación, aunque las órdenes y posiciones sigan disponibles para inspección.
+Un poison previo o consumidores detenidos pueden impedir cumplir precondiciones;
+se informa el diagnóstico sin saltar registros ni resetear el grupo.
 
 ## Inspeccionar la base de datos y Kafka
 
@@ -197,9 +277,9 @@ republicaciones aparecen como registros distintos, aunque la aplicación las hay
 clasificado como `DUPLICATE`.
 
 La dirección `localhost:29092` se usa **dentro del contenedor Kafka**. Para conectar
-una herramienta desde el host, usar `localhost:9092`. No hay una Kafka UI incluida
-en este Compose. Los comandos de consumo permiten inspeccionar los ER; el estado
-actual de cada orden se consulta por HTTP o en `app.orders`.
+una herramienta desde el host, usar `localhost:9092`. La vista **Mensajes** de la
+consola permite inspeccionar el broker; estos comandos son una alternativa.
+El estado actual de cada orden también se consulta por HTTP o en `app.orders`.
 
 ## Formato y pruebas
 
