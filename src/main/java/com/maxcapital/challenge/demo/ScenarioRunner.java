@@ -65,6 +65,7 @@ public class ScenarioRunner {
     try {
       for (String scenario : run.scenarios) {
         run.checkCancellation();
+        run.beginScenario(scenario);
         steps.execute(run, scenario, restoration);
         run.checkCancellation();
         run.passed();

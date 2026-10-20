@@ -2,9 +2,9 @@
 
 ## 1. Contratos y evidencia del servidor
 
-- [ ] 1.1 Ampliar catálogo con los cinco nombres, explicación y acciones previstas; verificar catálogo y contratos previos en integración.
-- [ ] 1.2 Incorporar agrupación por escenario, IDs estables y checks esperado/observado/referencias capturados por las aserciones; verificar los cinco escenarios con Kafka/SQL reales y conservar campos del smoke.
-- [ ] 1.3 Conservar checks parciales y distinguir no observado, fallo, cancelación y no ejecutado; ampliar integración de timeout/cancelación/restauración y documentar contratos en design.md.
+- [x] 1.1 Ampliar catálogo con los cinco nombres, explicación y acciones previstas; verificar catálogo y contratos previos en integración.
+- [x] 1.2 Incorporar agrupación por escenario, IDs estables y checks esperado/observado/referencias capturados por las aserciones; verificar los cinco escenarios con Kafka/SQL reales y conservar campos del smoke.
+- [x] 1.3 Conservar checks parciales y distinguir no observado, fallo, cancelación y no ejecutado; ampliar integración de timeout/cancelación/restauración y documentar contratos en design.md.
 
 ## 2. Recorrido del evaluador
 

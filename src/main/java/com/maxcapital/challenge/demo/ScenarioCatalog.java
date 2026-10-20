@@ -14,7 +14,29 @@ public class ScenarioCatalog {
       String dependency,
       String objective,
       List<String> preconditions,
-      String expected) {}
+      String expected,
+      String explanation,
+      List<String> actions) {
+    Entry(
+        String id,
+        String title,
+        boolean available,
+        String dependency,
+        String objective,
+        List<String> preconditions,
+        String expected) {
+      this(
+          id,
+          title,
+          available,
+          dependency,
+          objective,
+          preconditions,
+          expected,
+          ScenarioGuidance.explanation(id),
+          ScenarioGuidance.actions(id));
+    }
+  }
 
   public List<Entry> entries() {
     var ready =
@@ -24,7 +46,7 @@ public class ScenarioCatalog {
     return List.of(
         new Entry(
             "interleaved-orders",
-            "Órdenes intercaladas",
+            "Dos órdenes en paralelo",
             true,
             "F-02/F-03",
             "Observar la secuencia por orden en ambas particiones",
@@ -32,7 +54,7 @@ public class ScenarioCatalog {
             "FILLED con 4 ER y CANCELLED con 3; estado y ledger consistentes en ambas instancias"),
         new Entry(
             "quantity-snapshots",
-            "Snapshots y reloj del origen",
+            "Las cantidades acumuladas no se suman",
             true,
             "F-02",
             "Comprobar acumulados sin sumarlos y secuencia independiente del reloj",
@@ -40,7 +62,7 @@ public class ScenarioCatalog {
             "Acumulados 0, 3, 7 y 10; cuatro entradas de ledger"),
         new Entry(
             "terminal-duplicates",
-            "Duplicados después del terminal",
+            "Los mensajes repetidos no duplican efectos",
             true,
             "F-03",
             "Republicar FILLED y NEW después de completar una orden",
@@ -48,7 +70,7 @@ public class ScenarioCatalog {
             "Dos APPLIED y dos DUPLICATE; contador y ledger permanecen en dos"),
         new Entry(
             "restart-persistence",
-            "Persistencia después del lote",
+            "Los datos sobreviven al reinicio",
             true,
             "F-02/F-03",
             "Reiniciar ambas instancias después de consumir y republicar terminales",
@@ -56,7 +78,7 @@ public class ScenarioCatalog {
             "Estado y ledger completos iguales; nuevos resultados DUPLICATE. No prueba caídas entre commits"),
         new Entry(
             "committed-input-only",
-            "Transacciones confirmadas y abortadas",
+            "Las transacciones abortadas no afectan las órdenes",
             true,
             "F-02/F-03",
             "Observar qué entrada ve un consumidor read_committed",

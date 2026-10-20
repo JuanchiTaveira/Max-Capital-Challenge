@@ -147,6 +147,13 @@ class DemoScenariosIT {
   @Test
   void executesAvailableWithRealKafkaSqlAndTwoInstancesAndKeepsPendingExcluded() throws Exception {
     // GIVEN: Dos aplicaciones reales comparten Kafka y PostgreSQL; Docker está sustituido.
+    var catalog = json.readTree(get("/catalog").body());
+    assertThat(catalog.size()).isEqualTo(8);
+    assertThat(catalog.get(0).path("title").asString()).isEqualTo("Dos órdenes en paralelo");
+    for (int index = 0; index < 5; index++) {
+      assertThat(catalog.get(index).path("explanation").asString()).isNotBlank();
+      assertThat(catalog.get(index).path("actions").size()).isEqualTo(3);
+    }
     // WHEN
     var pending = post("/runs", Map.of("scenario", "settlement-once", "mode", "automatic"));
 
@@ -169,6 +176,67 @@ class DemoScenariosIT {
     assertThat(state.path("passedScenarios").asInt()).isEqualTo(5);
     assertThat(state.path("excludedPending").asInt()).isEqualTo(3);
     assertThat(state.path("messages").size()).isEqualTo(27);
+    assertThat(state.path("scenarioResults").size()).isEqualTo(5);
+    for (var scenario : state.path("scenarioResults")) {
+      String scenarioId = scenario.path("scenarioId").asString();
+      assertThat(scenario.path("status").asString()).isEqualTo("PASSED");
+      assertThat(scenario.path("conclusion").asString()).isNotBlank();
+      for (var check : scenario.path("checks")) {
+        assertThat(check.path("status").asString()).isEqualTo("PASSED");
+        assertThat(check.path("observed").asString()).isNotBlank();
+        assertThat(check.path("observedAt").asString()).isNotBlank();
+        assertThat(check.path("references").isEmpty()).isFalse();
+        var step =
+            java.util.stream.StreamSupport.stream(state.path("steps").spliterator(), false)
+                .filter(item -> item.path("id").asString().equals(check.path("stepId").asString()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(step.path("scenarioId").asString()).isEqualTo(scenarioId);
+      }
+    }
+    for (var message : state.path("messages")) {
+      assertThat(message.path("id").asString())
+          .isEqualTo(
+              message.path("topic").asString()
+                  + "/"
+                  + message.path("partition").asString()
+                  + "/"
+                  + message.path("offset").asString());
+      assertThat(
+              java.util.stream.StreamSupport.stream(state.path("steps").spliterator(), false)
+                  .anyMatch(
+                      step ->
+                          step.path("id").asString().equals(message.path("stepId").asString())
+                              && step.path("scenarioId")
+                                  .asString()
+                                  .equals(message.path("scenarioId").asString())))
+          .isTrue();
+    }
+    var duplicateScenario = state.path("scenarioResults").get(2);
+    assertThat(
+            check(duplicateScenario, "new")
+                .path("references")
+                .path("snapshot")
+                .path("status")
+                .asString())
+        .isEqualTo("NEW");
+    assertThat(
+            check(duplicateScenario, "final")
+                .path("references")
+                .path("snapshot")
+                .path("status")
+                .asString())
+        .isEqualTo("FILLED");
+    assertThat(
+            check(duplicateScenario, "final")
+                .path("references")
+                .path("snapshot")
+                .path("appliedExecutionCount")
+                .isString())
+        .isTrue();
+    assertThat(
+            check(state.path("scenarioResults").get(4), "visibility").path("observed").asString())
+        .contains("excluido");
     verify(docker).control("app-1", "restart");
     verify(docker).control("app-2", "restart");
     verify(docker).control("app-1", "start");
@@ -216,6 +284,12 @@ class DemoScenariosIT {
 
     // THEN
     assertThat(cancelled.path("status").asString()).isEqualTo("CANCELLED");
+    var partial = cancelled.path("scenarioResults").get(0);
+    assertThat(partial.path("status").asString()).isEqualTo("CANCELLED");
+    assertThat(check(partial, "new").path("status").asString()).isEqualTo("PASSED");
+    assertThat(check(partial, "final").path("status").asString()).isEqualTo("NOT_OBSERVED");
+    assertThat(check(partial, "final").path("observed").isNull()).isTrue();
+    assertThat(partial.path("conclusion").asString()).contains("cancelada");
     assertThat(
             jdbc.queryForObject(
                 "SELECT applied_execution_count FROM app.orders WHERE numeric_order_id=?",
@@ -231,13 +305,26 @@ class DemoScenariosIT {
         .when(instances)
         .read("app-1", "/internal/demo/consumer");
     // WHEN
-    var response = post("/runs", Map.of("scenario", "quantity-snapshots", "mode", "automatic"));
+    var response = post("/runs", Map.of("scenario", "available", "mode", "automatic"));
     String id = json.readTree(response.body()).path("id").asString();
     var state = terminal(id);
     // THEN
     assertThat(state.path("status").asString()).isEqualTo("FAILED");
     assertThat(state.path("error").asString()).contains("plazo", "Falla transitoria visible");
     assertThat(state.path("orders").size()).isZero();
+    var partial = state.path("scenarioResults").get(0);
+    assertThat(check(partial, "ready").path("status").asString()).isEqualTo("FAILED");
+    assertThat(check(partial, "ready").path("observed").isNull()).isTrue();
+    assertThat(check(partial, "ready").path("diagnostic").asString())
+        .contains("Falla transitoria visible");
+    for (int index = 1; index < 5; index++) {
+      assertThat(state.path("scenarioResults").get(index).path("status").asString())
+          .isEqualTo("NOT_RUN");
+      for (var check : state.path("scenarioResults").get(index).path("checks")) {
+        assertThat(check.path("status").asString()).isEqualTo("NOT_OBSERVED");
+        assertThat(check.path("observed").isNull()).isTrue();
+      }
+    }
   }
 
   @Test
@@ -252,6 +339,9 @@ class DemoScenariosIT {
     // THEN
     assertThat(state.path("status").asString()).isEqualTo("FAILED");
     assertThat(state.path("error").asString()).contains("Reinicio fallido controlado");
+    var partial = state.path("scenarioResults").get(0);
+    assertThat(check(partial, "order-a").path("status").asString()).isEqualTo("PASSED");
+    assertThat(check(partial, "preserved").path("status").asString()).isEqualTo("NOT_OBSERVED");
     verify(docker).control("app-1", "start");
     verify(docker).control("app-2", "start");
     for (var order : state.path("orders")) {
@@ -270,6 +360,13 @@ class DemoScenariosIT {
         .until(
             () -> List.of("PASSED", "FAILED", "CANCELLED").contains(runner.get(id).get("status")));
     return json.valueToTree(runner.get(id));
+  }
+
+  JsonNode check(JsonNode scenario, String id) {
+    return java.util.stream.StreamSupport.stream(scenario.path("checks").spliterator(), false)
+        .filter(item -> item.path("id").asString().equals(id))
+        .findFirst()
+        .orElseThrow();
   }
 
   JsonNode waiting(String id, int steps) {

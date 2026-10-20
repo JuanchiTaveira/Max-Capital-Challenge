@@ -23,6 +23,9 @@ final class DemoRun {
   private final List<Map<String, Object>> steps = new ArrayList<>();
   private final List<String> orders = new ArrayList<>();
   private final List<Map<String, Object>> messages = new ArrayList<>();
+  private final Map<String, ScenarioResult> scenarioResults = new LinkedHashMap<>();
+  private ScenarioResult current;
+  private Map<String, Object> currentStep;
   private String status = "RUNNING";
   private String error;
   private boolean cancelled;
@@ -35,18 +38,86 @@ final class DemoRun {
     this.mode = mode;
     this.scenarios = List.copyOf(scenarios);
     this.timeoutMillis = timeoutMillis;
+    scenarios.forEach(scenario -> scenarioResults.put(scenario, new ScenarioResult(scenario)));
+  }
+
+  private static final class ScenarioResult {
+    final String id;
+    final Map<String, Map<String, Object>> checks;
+    final List<Map<String, String>> orders = new ArrayList<>();
+    String status = "PENDING";
+    String conclusion = "Todavía no se ejecutó esta prueba.";
+
+    ScenarioResult(String id) {
+      this.id = id;
+      checks = ScenarioGuidance.checks(id);
+    }
+
+    Map<String, Object> snapshot() {
+      return Map.of(
+          "scenarioId",
+          id,
+          "status",
+          status,
+          "conclusion",
+          conclusion,
+          "orders",
+          List.copyOf(orders),
+          "checks",
+          checks.values().stream().map(LinkedHashMap::new).toList());
+    }
+  }
+
+  synchronized void beginScenario(String id) {
+    current = scenarioResults.get(id);
+    current.status = "RUNNING";
+    current.conclusion = "Prueba en curso. Las filas indican lo observado hasta ahora.";
+  }
+
+  synchronized String orderLabel(long id) {
+    return current.orders.stream()
+        .filter(o -> o.get("numericOrderId").equals(Long.toString(id)))
+        .map(o -> o.get("label"))
+        .findFirst()
+        .orElse("Orden");
+  }
+
+  synchronized void observe(
+      String checkId, String observed, boolean passed, Map<String, ?> references) {
+    var check = current.checks.get(checkId);
+    if (check == null) throw new IllegalArgumentException("Verificación desconocida: " + checkId);
+    check.put("observed", observed);
+    check.put("status", passed ? "PASSED" : "WAITING");
+    check.put("observedAt", Instant.now().toString());
+    check.put("stepId", currentStep.get("id"));
+    check.put("references", Map.copyOf(references));
+  }
+
+  synchronized void diagnostic(String checkId, String error) {
+    var check = current.checks.get(checkId);
+    check.put("status", "WAITING");
+    check.put("diagnostic", error);
+    check.put("stepId", currentStep.get("id"));
   }
 
   void step(String title, String expected, Action action) {
     var step = new LinkedHashMap<String, Object>();
     synchronized (this) {
       checkCancellation();
+      step.put(
+          "id",
+          current.id
+              + "-step-"
+              + (steps.stream().filter(s -> current.id.equals(s.get("scenarioId"))).count() + 1));
+      step.put("scenarioId", current.id);
       step.put("title", title);
       step.put("expected", expected);
       step.put("status", "PENDING");
       steps.add(step);
+      currentStep = step;
       if (mode.equals("step")) {
         status = "WAITING";
+        current.status = "WAITING";
         long until = System.nanoTime() + java.time.Duration.ofMinutes(30).toNanos();
         while (!permit && !cancelled) {
           if (System.nanoTime() > until)
@@ -62,6 +133,7 @@ final class DemoRun {
       }
       checkCancellation();
       status = "RUNNING";
+      current.status = "RUNNING";
       step.put("status", "RUNNING");
       deadline = System.nanoTime() + java.time.Duration.ofMillis(timeoutMillis).toNanos();
     }
@@ -108,6 +180,8 @@ final class DemoRun {
 
   synchronized void order(String id) {
     orders.add(id);
+    current.orders.add(
+        Map.of("numericOrderId", id, "label", "Orden " + (char) ('A' + current.orders.size())));
   }
 
   synchronized void message(ConsoleKafka.Record record) {
@@ -115,29 +189,66 @@ final class DemoRun {
   }
 
   synchronized void message(ConsoleKafka.Record record, String transaction) {
-    messages.add(
-        Map.of(
-            "topic",
-            record.topic(),
-            "partition",
-            record.partition(),
-            "offset",
-            record.offset(),
-            "key",
-            record.key(),
-            "payload",
-            record.payload(),
-            "transaction",
-            transaction));
+    var message =
+        new LinkedHashMap<String, Object>(
+            Map.of(
+                "topic",
+                record.topic(),
+                "partition",
+                record.partition(),
+                "offset",
+                record.offset(),
+                "key",
+                record.key(),
+                "payload",
+                record.payload(),
+                "transaction",
+                transaction));
+    message.put("id", record.topic() + "/" + record.partition() + "/" + record.offset());
+    message.put("scenarioId", current.id);
+    message.put("stepId", currentStep.get("id"));
+    messages.add(message);
   }
 
   synchronized void passed() {
+    if (current.checks.values().stream().anyMatch(check -> !"PASSED".equals(check.get("status"))))
+      throw new IllegalStateException("Quedaron verificaciones sin completar en " + current.id);
+    current.status = "PASSED";
+    List<String> summary =
+        switch (current.id) {
+          case "interleaved-orders" -> List.of("order-a", "order-b");
+          case "restart-persistence" -> List.of("preserved", "duplicates");
+          case "quantity-snapshots" -> List.of("clock", "snapshot-4");
+          case "terminal-duplicates" -> List.of("duplicates", "final");
+          case "committed-input-only" -> List.of("visibility", "no-result", "final");
+          default -> throw new IllegalStateException("Escenario desconocido");
+        };
+    current.conclusion =
+        summary.stream()
+            .map(id -> current.checks.get(id).get("observed").toString())
+            .collect(java.util.stream.Collectors.joining(" "));
     passed++;
   }
 
   synchronized void finish(String status, String error) {
     this.status = status;
     this.error = error;
+    for (var scenario : scenarioResults.values()) {
+      if (scenario.status.equals("PENDING")) {
+        scenario.status = "NOT_RUN";
+        scenario.conclusion = "No se ejecutó: el recorrido terminó antes de llegar a esta prueba.";
+      } else if (!scenario.status.equals("PASSED")) {
+        scenario.status = status;
+        scenario.conclusion =
+            status.equals("CANCELLED")
+                ? "Prueba cancelada. Se conservan los efectos y verificaciones obtenidos; las comprobaciones pendientes no se completaron."
+                : "No se completó la prueba. Revisá el diagnóstico y las verificaciones pendientes; los datos confirmados se conservan.";
+        scenario.checks.values().stream()
+            .filter(check -> "WAITING".equals(check.get("status")))
+            .forEach(
+                check -> check.put("status", status.equals("CANCELLED") ? "INCOMPLETE" : "FAILED"));
+      }
+    }
     if (!steps.isEmpty() && List.of("PENDING", "RUNNING").contains(steps.getLast().get("status"))) {
       steps.getLast().put("status", status);
       steps.getLast().put("error", error);
@@ -156,6 +267,9 @@ final class DemoRun {
     result.put("orders", List.copyOf(orders));
     result.put("messages", List.copyOf(messages));
     result.put("steps", steps.stream().map(LinkedHashMap::new).toList());
+    result.put(
+        "scenarioResults",
+        scenarioResults.values().stream().map(ScenarioResult::snapshot).toList());
     result.put("error", error);
     return result;
   }

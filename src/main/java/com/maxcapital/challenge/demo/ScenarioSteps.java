@@ -38,7 +38,7 @@ public class ScenarioSteps {
 
   void execute(DemoRun run, String scenario, Set<String> restoration) {
     run.step(
-        scenario + " / Preparar",
+        "Comprobar que el entorno está preparado",
         "Dos consumidores con una partición cada uno; SQL y Kafka disponibles",
         () -> ready(run));
     switch (scenario) {
@@ -57,35 +57,53 @@ public class ScenarioSteps {
 
   @SuppressWarnings("unchecked")
   private Map<String, Object> ready(DemoRun run) {
+    return ready(run, "ready");
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> ready(DemoRun run, String checkId) {
     return await(
         run,
         "consumidores y dependencias listos",
         () -> {
-          queries.list(null, 1);
-          var group = system.group();
-          var members = (List<Map<String, Object>>) group.get("members");
-          require(
-              members.size() == 2,
-              "Esperados dos miembros del grupo; observados " + members.size());
-          for (var member : members)
+          try {
+            queries.list(null, 1);
+            var group = system.group();
+            var members = (List<Map<String, Object>>) group.get("members");
             require(
-                ((List<?>) member.get("assignments")).size() == 1,
-                "Esperada una partición por miembro");
-          var views = new ArrayList<Map<String, Object>>();
-          for (String service : List.of("app-1", "app-2")) {
-            var view = instances.read(service, "/internal/demo/consumer");
-            require((int) view.get("statusCode") == 200, "Observación no disponible: " + service);
-            var data = (JsonNode) view.get("data");
-            require(
-                data.path("running").asBoolean() && data.path("assignments").size() == 1,
-                "Consumidor no preparado: " + service);
-            require(
-                members.stream()
-                    .anyMatch(m -> m.get("clientId").equals(data.path("clientId").asString())),
-                "ClientId de la instancia no observado en el grupo: " + service);
-            views.add(view);
+                members.size() == 2,
+                "Esperados dos miembros del grupo; observados " + members.size());
+            for (var member : members)
+              require(
+                  ((List<?>) member.get("assignments")).size() == 1,
+                  "Esperada una partición por miembro");
+            var views = new ArrayList<Map<String, Object>>();
+            for (String service : List.of("app-1", "app-2")) {
+              var view = instances.read(service, "/internal/demo/consumer");
+              require((int) view.get("statusCode") == 200, "Observación no disponible: " + service);
+              var data = (JsonNode) view.get("data");
+              require(
+                  data.path("running").asBoolean() && data.path("assignments").size() == 1,
+                  "Consumidor no preparado: " + service);
+              require(
+                  members.stream()
+                      .anyMatch(m -> m.get("clientId").equals(data.path("clientId").asString())),
+                  "ClientId de la instancia no observado en el grupo: " + service);
+              views.add(view);
+            }
+            var evidence = Map.of("group", group, "instances", views);
+            run.observe(
+                checkId,
+                "PostgreSQL y Kafka disponibles; "
+                    + members.size()
+                    + " consumidores activos, cada uno con una partición.",
+                true,
+                evidence);
+            return evidence;
+          } catch (RuntimeException ex) {
+            run.diagnostic(checkId, DemoRun.message(ex));
+            throw ex;
           }
-          return Map.of("group", group, "instances", views);
         });
   }
 
@@ -113,9 +131,18 @@ public class ScenarioSteps {
           flow.records.add(flow.secondTerminal);
           flow.firstTerminal = emit(run, flow.first, 4, "FILLED", 10, 0);
           flow.records.add(flow.firstTerminal);
-          require(
-              !flow.firstTerminal.partition().equals(flow.secondTerminal.partition()),
-              "Se esperaban particiones diferentes");
+          boolean different =
+              !flow.firstTerminal.partition().equals(flow.secondTerminal.partition());
+          run.observe(
+              "partitions",
+              "Orden A en partición "
+                  + flow.firstTerminal.partition()
+                  + "; orden B en partición "
+                  + flow.secondTerminal.partition()
+                  + ".",
+              different,
+              Map.of("messages", flow.records));
+          require(different, "Se esperaban particiones diferentes");
           committed(run, flow.records);
           return Map.of("positions", flow.records);
         });
@@ -123,9 +150,11 @@ public class ScenarioSteps {
         "Verificar secuencia y efectos SQL",
         "Contador y ledger 4/3; siete APPLIED y mismas consultas en ambas instancias",
         () -> {
-          assertResults(run, flow.records, "APPLIED");
-          flow.firstBefore = snapshot(expectOrder(flow.first, "FILLED", 10, 1, 2, 3, 4));
-          flow.secondBefore = snapshot(expectOrder(flow.second, "CANCELLED", 7, 1, 2, 3));
+          assertResults(run, flow.records, "APPLIED", "applied");
+          flow.firstBefore =
+              snapshot(expectOrder(run, "order-a", flow.first, "FILLED", 10, 1, 2, 3, 4));
+          flow.secondBefore =
+              snapshot(expectOrder(run, "order-b", flow.second, "CANCELLED", 7, 1, 2, 3));
           return Map.of("filled", flow.firstBefore, "cancelled", flow.secondBefore);
         });
     if (!restart) return;
@@ -137,7 +166,7 @@ public class ScenarioSteps {
           var first = docker.control("app-1", "restart");
           restoration.add("app-2");
           var second = docker.control("app-2", "restart");
-          return Map.of("controls", List.of(first, second), "recovered", ready(run));
+          return Map.of("controls", List.of(first, second), "recovered", ready(run, "recovered"));
         });
     run.step(
         "Republicar terminales y comparar",
@@ -146,12 +175,25 @@ public class ScenarioSteps {
           var first = republish(run, flow.firstTerminal);
           var second = republish(run, flow.secondTerminal);
           committed(run, List.of(first, second));
-          assertResults(run, List.of(first, second), "DUPLICATE");
-          var currentFirst = snapshot(expectOrder(flow.first, "FILLED", 10, 1, 2, 3, 4));
-          var currentSecond = snapshot(expectOrder(flow.second, "CANCELLED", 7, 1, 2, 3));
-          require(
-              flow.firstBefore.equals(currentFirst) && flow.secondBefore.equals(currentSecond),
-              "El estado o ledger cambió tras reiniciar");
+          assertResults(run, List.of(first, second), "DUPLICATE", "duplicates");
+          var currentFirst =
+              snapshot(expectOrder(run, "order-a", flow.first, "FILLED", 10, 1, 2, 3, 4));
+          var currentSecond =
+              snapshot(expectOrder(run, "order-b", flow.second, "CANCELLED", 7, 1, 2, 3));
+          boolean same =
+              flow.firstBefore.equals(currentFirst) && flow.secondBefore.equals(currentSecond);
+          run.observe(
+              "preserved",
+              same
+                  ? "Estado, cantidades, contador y ledger de ambas órdenes permanecieron iguales después del reinicio."
+                  : "Se encontraron diferencias en los datos de las órdenes después del reinicio.",
+              same,
+              Map.of(
+                  "before",
+                  List.of(flow.firstBefore, flow.secondBefore),
+                  "after",
+                  List.of(currentFirst, currentSecond)));
+          require(same, "El estado o ledger cambió tras reiniciar");
           return Map.of(
               "filled",
               currentFirst,
@@ -164,6 +206,8 @@ public class ScenarioSteps {
 
   private void quantities(DemoRun run) {
     long order = fresh(run, 0);
+    var times = new ArrayList<String>();
+    var amounts = new ArrayList<String>();
     for (int index = 0; index < 4; index++) {
       int fix = index + 1, amount = new int[] {0, 3, 7, 10}[index];
       String status = index == 0 ? "NEW" : index == 3 ? "FILLED" : "PARTIALLY_FILLED";
@@ -175,9 +219,37 @@ public class ScenarioSteps {
             committed(run, List.of(record));
             assertResults(run, List.of(record), "APPLIED");
             int[] fixes = java.util.stream.IntStream.rangeClosed(1, fix).toArray();
+            var actual = expectOrder(run, "snapshot-" + fix, order, status, amount, fixes);
+            times.add(
+                ConsoleValues.JSON.readTree(record.payload()).path("transactionTime").asString());
+            amounts.add(
+                new BigDecimal(actual.get("accumulativeNominalAmount").toString())
+                    .stripTrailingZeros()
+                    .toPlainString());
+            if (fix == 4) {
+              boolean descending =
+                  java.util.stream.IntStream.range(1, times.size())
+                      .allMatch(i -> times.get(i).compareTo(times.get(i - 1)) <= 0);
+              run.observe(
+                  "clock",
+                  "Acumulados observados "
+                      + String.join(" → ", amounts)
+                      + "; horas de origen "
+                      + String.join(" → ", times)
+                      + ".",
+                  descending,
+                  Map.of(
+                      "orderId",
+                      Long.toString(order),
+                      "transactionTimes",
+                      List.copyOf(times),
+                      "amounts",
+                      List.copyOf(amounts)));
+              require(descending, "El reloj del origen no fue decreciente");
+            }
             return Map.of(
                 "order",
-                expectOrder(order, status, amount, fixes),
+                actual,
                 "transactionTime",
                 ConsoleValues.JSON.readTree(record.payload()).path("transactionTime").asString());
           });
@@ -194,7 +266,7 @@ public class ScenarioSteps {
           var record = emit(run, order, 1, "NEW", 0, 10);
           records.add(record);
           committed(run, List.of(record));
-          return Map.of("order", expectOrder(order, "NEW", 0, 1));
+          return Map.of("order", expectOrder(run, "new", order, "NEW", 0, 1));
         });
     run.step(
         "Completar y republicar terminal",
@@ -207,7 +279,7 @@ public class ScenarioSteps {
           records.add(duplicate);
           committed(run, List.of(duplicate));
           assertResults(run, List.of(duplicate), "DUPLICATE");
-          return Map.of("order", expectOrder(order, "FILLED", 10, 1, 2));
+          return Map.of("order", expectOrder(run, "terminal", order, "FILLED", 10, 1, 2));
         });
     run.step(
         "Republicar NEW después de FILLED",
@@ -219,21 +291,48 @@ public class ScenarioSteps {
           assertResults(run, List.of(late), "DUPLICATE");
           var original = result(run, records.getFirst());
           var duplicate = result(run, late);
-          require(
+          boolean historical =
               "NEW".equals(original.get("status"))
-                  && "1".equals(original.get("appliedExecutionCount")),
-              "Snapshot original NEW alterado");
-          require(
-              "FILLED".equals(duplicate.get("status"))
-                  && original.get("ledgerId").equals(duplicate.get("ledgerId")),
-              "Snapshot o referencia del duplicado tardío incorrectos");
+                  && "1".equals(original.get("appliedExecutionCount"))
+                  && "FILLED".equals(duplicate.get("status"))
+                  && original.get("ledgerId").equals(duplicate.get("ledgerId"));
+          run.observe(
+              "history",
+              "La creación original conserva "
+                  + original.get("status")
+                  + "; la repetición tardía conserva "
+                  + duplicate.get("status")
+                  + ". Referencias de ledger: "
+                  + original.get("ledgerId")
+                  + " y "
+                  + duplicate.get("ledgerId")
+                  + ".",
+              historical,
+              Map.of("original", original, "lateDuplicate", duplicate));
+          require(historical, "Snapshot o referencia histórica incorrectos");
+          var outcomes = records.stream().map(record -> result(run, record)).toList();
+          long applied =
+              outcomes.stream().filter(row -> "APPLIED".equals(row.get("outcome"))).count();
+          long duplicated =
+              outcomes.stream().filter(row -> "DUPLICATE".equals(row.get("outcome"))).count();
+          run.observe(
+              "duplicates",
+              records.size()
+                  + " envíos confirmados: "
+                  + applied
+                  + " aplicados y "
+                  + duplicated
+                  + " duplicados sin nuevo efecto.",
+              applied == 2 && duplicated == 2,
+              Map.of("results", outcomes, "messages", List.copyOf(records)));
+          require(applied == 2 && duplicated == 2, "Distribución de resultados incorrecta");
           return Map.of(
               "original",
               original,
               "lateDuplicate",
               duplicate,
               "order",
-              expectOrder(order, "FILLED", 10, 1, 2));
+              expectOrder(run, "final", order, "FILLED", 10, 1, 2));
         });
   }
 
@@ -249,7 +348,8 @@ public class ScenarioSteps {
           run.message(record, "COMMITTED");
           records.add(record);
           committed(run, List.of(record));
-          return Map.of("transaction", "COMMITTED", "order", expectOrder(order, "NEW", 0, 1));
+          return Map.of(
+              "transaction", "COMMITTED", "order", expectOrder(run, "new", order, "NEW", 0, 1));
         });
     run.step(
         "Abortar parcial",
@@ -260,6 +360,11 @@ public class ScenarioSteps {
                   Long.toString(order), report(run, order, 2, "PARTIALLY_FILLED", 7, 3), true);
           run.message(record, "ABORTED");
           records.add(record);
+          run.observe(
+              "aborted",
+              "El productor abortó la transacción del parcial. Su posición no demuestra aplicación; se verifica en el paso siguiente.",
+              true,
+              Map.of("position", record));
           return Map.of("transaction", "ABORTED", "position", record);
         });
     run.step(
@@ -284,26 +389,45 @@ public class ScenarioSteps {
             batch.forEach(record -> visible.add(record.offset()));
             cursor = page.get("nextCursor").toString();
           }
-          require(
+          boolean visibility =
               visible.contains(records.getFirst().offset())
                   && visible.contains(last.offset())
-                  && !visible.contains(records.get(1).offset()),
-              "Visibilidad transaccional incorrecta");
-          require(
+                  && !visible.contains(records.get(1).offset());
+          run.observe(
+              "visibility",
+              "Creación "
+                  + (visible.contains(records.getFirst().offset()) ? "visible" : "no visible")
+                  + "; finalización "
+                  + (visible.contains(last.offset()) ? "visible" : "no visible")
+                  + "; parcial abortado "
+                  + (visible.contains(records.get(1).offset())
+                      ? "visible"
+                      : "excluido de la lectura confirmada")
+                  + ".",
+              visibility,
+              Map.of("visibleOffsets", List.copyOf(visible), "messages", List.copyOf(records)));
+          require(visibility, "Visibilidad transaccional incorrecta");
+          var abortedResult =
               queries
-                      .result(
-                          "execution-reports",
-                          Integer.parseInt(last.partition()),
-                          records.get(1).offset())
-                      .get("result")
-                  == null,
-              "El parcial abortado produjo resultado SQL");
-          assertResults(run, List.of(records.getFirst(), last), "APPLIED");
+                  .result(
+                      "execution-reports",
+                      Integer.parseInt(last.partition()),
+                      records.get(1).offset())
+                  .get("result");
+          run.observe(
+              "no-result",
+              abortedResult == null
+                  ? "No se registró resultado SQL para el parcial abortado después de observar el sucesor confirmado."
+                  : "Se registró un resultado SQL para el parcial abortado.",
+              abortedResult == null,
+              Map.of("position", records.get(1), "successor", last));
+          require(abortedResult == null, "El parcial abortado produjo resultado SQL");
+          assertResults(run, List.of(records.getFirst(), last), "APPLIED", "applied");
           return Map.of(
               "visibleOffsets",
               visible,
               "order",
-              expectOrder(order, "FILLED", 10, 1, 3),
+              expectOrder(run, "final", order, "FILLED", 10, 1, 3),
               "scope",
               "Visibilidad de entrada; no prueba settlement");
         });
@@ -391,61 +515,135 @@ public class ScenarioSteps {
   }
 
   private void assertResults(DemoRun run, List<ConsoleKafka.Record> records, String outcome) {
-    for (var record : records) {
-      var row = result(run, record);
-      require(
-          outcome.equals(row.get("outcome")),
-          "Outcome esperado " + outcome + "; observado " + row.get("outcome"));
-      require(record.key().equals(row.get("numericOrderId")), "Resultado asociado a otra orden");
+    assertResults(run, records, outcome, null);
+  }
+
+  private void assertResults(
+      DemoRun run, List<ConsoleKafka.Record> records, String outcome, String checkId) {
+    var rows = new ArrayList<Map<String, Object>>();
+    try {
+      for (var record : records) {
+        var row = result(run, record);
+        rows.add(row);
+        require(
+            outcome.equals(row.get("outcome")),
+            "Outcome esperado " + outcome + "; observado " + row.get("outcome"));
+        require(record.key().equals(row.get("numericOrderId")), "Resultado asociado a otra orden");
+      }
+      if (checkId != null)
+        run.observe(
+            checkId,
+            rows.size()
+                + " resultados "
+                + outcome
+                + " observados en SQL para las posiciones y órdenes publicadas.",
+            true,
+            Map.of("results", rows, "messages", records));
+    } catch (RuntimeException ex) {
+      if (checkId != null) {
+        if (rows.isEmpty()) run.diagnostic(checkId, DemoRun.message(ex));
+        else
+          run.observe(
+              checkId,
+              "Resultados observados: "
+                  + rows.stream().map(row -> row.get("outcome").toString()).toList()
+                  + ". "
+                  + DemoRun.message(ex),
+              false,
+              Map.of("results", List.copyOf(rows), "messages", records));
+      }
+      throw ex;
     }
   }
 
   @SuppressWarnings("unchecked")
   private Map<String, Object> expectOrder(
-      long order, String status, int accumulated, int... fixes) {
+      DemoRun run, String checkId, long order, String status, int accumulated, int... fixes) {
     String id = Long.toString(order);
     var actual = queries.order(id);
-    require(
-        status.equals(actual.get("status")),
-        "Estado esperado " + status + "; observado " + actual.get("status"));
-    require(
-        Integer.toString(fixes.length).equals(actual.get("appliedExecutionCount")),
-        "Contador incorrecto: " + actual.get("appliedExecutionCount"));
-    require(
-        new BigDecimal(actual.get("accumulativeNominalAmount").toString())
-                .compareTo(BigDecimal.valueOf(accumulated))
-            == 0,
-        "Acumulado incorrecto");
-    int leaves = status.equals("FILLED") || status.equals("CANCELLED") ? 0 : 10 - accumulated;
-    require(
-        new BigDecimal(actual.get("leavesNominalAmount").toString())
-                .compareTo(BigDecimal.valueOf(leaves))
-            == 0,
-        "Restante incorrecto");
-    var ledger = (List<Map<String, String>>) actual.get("ledger");
-    require(ledger.size() == fixes.length, "Tamaño del ledger incorrecto");
-    long previous = 0;
-    for (int i = 0; i < fixes.length; i++) {
-      var entry = ledger.get(i);
-      long ledgerId = Long.parseLong(entry.get("ledgerId"));
-      require(ledgerId > previous, "Ledger fuera de orden");
-      previous = ledgerId;
-      var payload = ConsoleValues.JSON.readTree(entry.get("payload"));
+    try {
       require(
-          payload.path("fixId").asInt() == fixes[i]
-              && payload.path("numericOrderId").asLong() == order,
-          "Secuencia o identidad de ledger incorrecta");
-      require("VSCPC".equals(payload.path("ticker").asString()), "Campo adicional perdido");
+          status.equals(actual.get("status")),
+          "Estado esperado " + status + "; observado " + actual.get("status"));
+      require(
+          Integer.toString(fixes.length).equals(actual.get("appliedExecutionCount")),
+          "Contador incorrecto: " + actual.get("appliedExecutionCount"));
+      require(
+          new BigDecimal(actual.get("accumulativeNominalAmount").toString())
+                  .compareTo(BigDecimal.valueOf(accumulated))
+              == 0,
+          "Acumulado incorrecto");
+      int leaves = status.equals("FILLED") || status.equals("CANCELLED") ? 0 : 10 - accumulated;
+      require(
+          new BigDecimal(actual.get("leavesNominalAmount").toString())
+                  .compareTo(BigDecimal.valueOf(leaves))
+              == 0,
+          "Restante incorrecto");
+      var ledger = (List<Map<String, String>>) actual.get("ledger");
+      require(ledger.size() == fixes.length, "Tamaño del ledger incorrecto");
+      long previous = 0;
+      for (int i = 0; i < fixes.length; i++) {
+        var entry = ledger.get(i);
+        long ledgerId = Long.parseLong(entry.get("ledgerId"));
+        require(ledgerId > previous, "Ledger fuera de orden");
+        previous = ledgerId;
+        var payload = ConsoleValues.JSON.readTree(entry.get("payload"));
+        require(
+            payload.path("fixId").asInt() == fixes[i]
+                && payload.path("numericOrderId").asLong() == order,
+            "Secuencia o identidad de ledger incorrecta");
+        require("VSCPC".equals(payload.path("ticker").asString()), "Campo adicional perdido");
+      }
+      var first = instances.order("app-1", id);
+      var second = instances.order("app-2", id);
+      require(
+          (int) first.get("statusCode") == 200 && (int) second.get("statusCode") == 200,
+          "Consulta HTTP no disponible");
+      require(
+          first.get("data").equals(second.get("data")),
+          "Las instancias no devuelven el mismo estado y ledger");
+      run.observe(
+          checkId,
+          describeOrder(run, order, actual)
+              + " Historial en secuencia y consultas de ambas instancias coincidentes.",
+          true,
+          Map.of("orderId", id, "snapshot", actual, "instances", List.of(first, second)));
+      return actual;
+    } catch (RuntimeException ex) {
+      run.observe(
+          checkId,
+          describeOrder(run, order, actual) + " " + DemoRun.message(ex),
+          false,
+          Map.of("orderId", id, "snapshot", actual));
+      throw ex;
     }
-    var first = instances.order("app-1", id);
-    var second = instances.order("app-2", id);
-    require(
-        (int) first.get("statusCode") == 200 && (int) second.get("statusCode") == 200,
-        "Consulta HTTP no disponible");
-    require(
-        first.get("data").equals(second.get("data")),
-        "Las instancias no devuelven el mismo estado y ledger");
-    return actual;
+  }
+
+  private static String describeOrder(DemoRun run, long order, Map<String, Object> actual) {
+    String status =
+        switch (actual.get("status").toString()) {
+          case "NEW" -> "creada";
+          case "PARTIALLY_FILLED" -> "parcialmente ejecutada";
+          case "FILLED" -> "completada";
+          case "CANCELLED" -> "cancelada";
+          default -> actual.get("status").toString();
+        };
+    return run.orderLabel(order)
+        + " "
+        + status
+        + ": acumulado "
+        + new BigDecimal(actual.get("accumulativeNominalAmount").toString())
+            .stripTrailingZeros()
+            .toPlainString()
+        + ", restante "
+        + new BigDecimal(actual.get("leavesNominalAmount").toString())
+            .stripTrailingZeros()
+            .toPlainString()
+        + ", "
+        + actual.get("appliedExecutionCount")
+        + " ER aplicados y "
+        + ((List<?>) actual.get("ledger")).size()
+        + " entradas de historial.";
   }
 
   private static Map<String, Object> snapshot(Map<String, Object> observed) {
