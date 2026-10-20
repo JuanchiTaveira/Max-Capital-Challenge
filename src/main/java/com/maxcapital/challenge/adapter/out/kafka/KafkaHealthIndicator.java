@@ -10,10 +10,12 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
+import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.stereotype.Component;
 
 @Component("kafkaHealthIndicator")
+@Profile("!evaluation-console")
 public class KafkaHealthIndicator implements HealthIndicator {
 
   private final AdminClient admin;

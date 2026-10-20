@@ -3,12 +3,14 @@ package com.maxcapital.challenge.adapter.in.kafka;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.listener.CommonContainerStoppingErrorHandler;
 import org.springframework.kafka.listener.ContainerProperties;
 
 @Configuration
+@Profile("!evaluation-console")
 public class ExecutionReportConsumerConfiguration {
   @Bean
   ConcurrentKafkaListenerContainerFactory<Object, Object> executionReportContainerFactory(

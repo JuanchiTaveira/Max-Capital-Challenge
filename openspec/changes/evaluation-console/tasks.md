@@ -7,11 +7,11 @@ abajo son entregables por incorporar, no herramientas que ya existan.
 
 ## 1. Proceso de consola y observación de instancias
 
-- [ ] 1.1 Incorporar el perfil `evaluation-console`, su activación exclusiva y recursos de UI propios, excluyendo listener y Flyway y tolerando dependencias caídas al iniciar; verificar con `EvaluationConsoleRuntimeIT` que el servidor responde sin SQL/Kafka disponibles y no modifica el esquema.
-- [ ] 1.2 Crear targets de imagen separados y servicio Compose en `127.0.0.1:8083`, agregando Docker CLI fijada/socket sólo a la consola y healthcheck propio; verificar `docker compose config`, build de ambos targets e inspección de imágenes/montajes, conservando el runtime de app-1/app-2.
-- [ ] 1.3 Agregar observación del listener en `GET /internal/demo/consumer`, habilitada por propiedad de Compose, y clientId identificable por instancia; verificar con integración HTTP que consumidor detenido y proceso saludable se informan por separado y que el endpoint queda deshabilitado fuera de demo.
-- [ ] 1.4 Comprobar con `EvaluationConsoleRuntimeIT` dos aplicaciones y una consola contra Kafka/PostgreSQL reales, exactamente dos miembros del grupo y una partición por aplicación; verificar que refrescar observaciones no cambia esa composición.
-- [ ] 1.5 Documentar en README el puerto, perfil, prerrequisitos y estado de arranque; registrar en DECISIONS el proceso independiente y la excepción de UI autorizada para evaluación, sin adelantar el estado implementado de la consola ni de F-04 a F-06; verificar correspondencia con Compose y el contrato de runtime.
+- [x] 1.1 Incorporar el perfil `evaluation-console`, su activación exclusiva y recursos de UI propios, excluyendo listener y Flyway y tolerando dependencias caídas al iniciar; verificar con `EvaluationConsoleRuntimeIT` que el servidor responde sin SQL/Kafka disponibles y no modifica el esquema.
+- [x] 1.2 Crear targets de imagen separados y servicio Compose en `127.0.0.1:8083`, agregando Docker CLI fijada/socket sólo a la consola y healthcheck propio; verificar `docker compose config`, build de ambos targets e inspección de imágenes/montajes, conservando el runtime de app-1/app-2.
+- [x] 1.3 Agregar observación del listener en `GET /internal/demo/consumer`, habilitada por propiedad de Compose, y clientId identificable por instancia; verificar con integración HTTP que consumidor detenido y proceso saludable se informan por separado y que el endpoint queda deshabilitado fuera de demo.
+- [x] 1.4 Comprobar con `EvaluationConsoleRuntimeIT` dos aplicaciones y una consola contra Kafka/PostgreSQL reales, exactamente dos miembros del grupo y una partición por aplicación; verificar que refrescar observaciones no cambia esa composición.
+- [x] 1.5 Documentar en README el puerto, perfil, prerrequisitos y estado de arranque; registrar en DECISIONS el proceso independiente y la excepción de UI autorizada para evaluación, sin adelantar el estado implementado de la consola ni de F-04 a F-06; verificar correspondencia con Compose y el contrato de runtime.
 
 ## 2. Consultas SQL y representación exacta
 

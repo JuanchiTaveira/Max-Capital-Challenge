@@ -1,0 +1,22 @@
+spring:
+  flyway:
+    enabled: false
+  datasource:
+    hikari:
+      initialization-fail-timeout: -1
+  kafka:
+    listener:
+      auto-startup: false
+
+management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState
+
+demo:
+  origin: ${DEMO_ORIGIN:http://localhost:8083}
+  compose-project: ${COMPOSE_PROJECT_NAME:}
+  app-1-url: ${DEMO_APP_1_URL:http://app-1:8080}
+  app-2-url: ${DEMO_APP_2_URL:http://app-2:8080}

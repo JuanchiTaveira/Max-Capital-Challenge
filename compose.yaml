@@ -3,7 +3,9 @@ name: max-capital-challenge
 x-kafka-image: &kafka-image apache/kafka:4.2.1@sha256:9916d60eca5d599550e2c320230808fda342124ba550bb4ac4ea8591803262a0
 
 x-application: &application
-  build: .
+  build:
+    context: .
+    target: application
   image: max-capital-challenge:0.1.0-SNAPSHOT
   init: true
   depends_on:
@@ -85,6 +87,8 @@ services:
     environment:
       <<: *application-environment
       INSTANCE_ID: app-1
+      APP_DEMO_OBSERVATION_ENABLED: "true"
+      SPRING_KAFKA_CONSUMER_CLIENT_ID: app-1
     ports:
       - "127.0.0.1:8081:8080"
 
@@ -93,8 +97,36 @@ services:
     environment:
       <<: *application-environment
       INSTANCE_ID: app-2
+      APP_DEMO_OBSERVATION_ENABLED: "true"
+      SPRING_KAFKA_CONSUMER_CLIENT_ID: app-2
     ports:
       - "127.0.0.1:8082:8080"
+
+  evaluation-console:
+    build:
+      context: .
+      target: evaluation-console
+    image: max-capital-evaluation-console:0.1.0-SNAPSHOT
+    init: true
+    environment:
+      <<: *application-environment
+      INSTANCE_ID: evaluation-console
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+      DEMO_ORIGIN: http://localhost:8083
+    ports:
+      - "127.0.0.1:8083:8080"
+    volumes:
+      - type: bind
+        source: ${SMOKE_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--max-time", "5", "http://localhost:8080/actuator/health/liveness"]
+      interval: 10s
+      timeout: 6s
+      start_period: 30s
+      retries: 6
 
   verify-f02:
     profiles: ["tools"]

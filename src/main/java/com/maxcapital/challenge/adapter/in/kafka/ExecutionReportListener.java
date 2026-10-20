@@ -6,11 +6,13 @@ import com.maxcapital.challenge.application.ProcessExecutionReport;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 @Component
+@Profile("!evaluation-console")
 public class ExecutionReportListener {
   private static final Logger LOG = LoggerFactory.getLogger(ExecutionReportListener.class);
   private final ExecutionReportParser parser;
