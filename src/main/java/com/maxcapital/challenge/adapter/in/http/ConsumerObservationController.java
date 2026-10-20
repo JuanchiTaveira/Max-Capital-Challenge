@@ -32,7 +32,10 @@ public class ConsumerObservationController {
     result.put("observedAt", Instant.now().toString());
     result.put("running", container != null && container.isRunning());
     result.put(
-        "clientId", container == null ? "" : container.getContainerProperties().getClientId());
+        "clientId",
+        container == null
+            ? ""
+            : String.join(",", container.metrics().keySet().stream().sorted().toList()));
     var partitions = container == null ? null : container.getAssignedPartitions();
     result.put(
         "assignments",

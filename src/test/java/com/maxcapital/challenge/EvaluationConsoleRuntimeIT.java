@@ -117,6 +117,12 @@ class EvaluationConsoleRuntimeIT {
               .contains("\"running\":true");
         }
         assertThat(
+                new tools.jackson.databind.json.JsonMapper()
+                    .readTree(get(port(first), "/internal/demo/consumer").body())
+                    .path("clientId")
+                    .asString())
+            .contains("first");
+        assertThat(
                 admin
                     .describeConsumerGroups(List.of("console-runtime-it"))
                     .all()

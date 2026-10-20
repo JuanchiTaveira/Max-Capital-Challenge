@@ -35,4 +35,10 @@ public class ConsoleErrors {
         .body(
             Map.of("error", ex.getMessage() == null ? "Servicio no disponible" : ex.getMessage()));
   }
+
+  @ExceptionHandler(org.apache.kafka.common.KafkaException.class)
+  ResponseEntity<?> broker() {
+    return ResponseEntity.status(503)
+        .body(Map.of("error", "Kafka no disponible para esta consulta"));
+  }
 }
