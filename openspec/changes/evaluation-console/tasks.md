@@ -15,10 +15,10 @@ abajo son entregables por incorporar, no herramientas que ya existan.
 
 ## 2. Consultas SQL y representación exacta
 
-- [ ] 2.1 Incorporar listado acotado de órdenes con cursor y detalle consistente reutilizando `OrderQueries`; verificar con `EvaluationConsoleQueriesIT` estado/contador/ledger, campos adicionales, paginación y errores de identificador sin alterar el endpoint público existente.
-- [ ] 2.2 Exponer resultados por `(topic, partition, offset)` y enlaces a ledger/orden; verificar el NEW original y su duplicado tardío tras FILLED, resultados con igual offset en particiones distintas y `result: null` sin clasificarlo como fallo.
-- [ ] 2.3 Definir DTO de consola con enteros/decimales como cadenas y reportes como texto JSON, y comparación HTTP de ambas instancias en el servidor; verificar ida y vuelta de IDs mayores que `9007199254740991`, límites válidos de 64 bits y `999999999999.12345678` sin cambios en SQL ni redondeos.
-- [ ] 2.4 Documentar en README estado actual frente a snapshot histórico, significado del contador y limitaciones de observación entre fuentes; verificar los ejemplos con los resultados de las integraciones de este grupo.
+- [x] 2.1 Incorporar listado acotado de órdenes con cursor y detalle consistente reutilizando `OrderQueries`; verificar con `EvaluationConsoleQueriesIT` estado/contador/ledger, campos adicionales, paginación y errores de identificador sin alterar el endpoint público existente.
+- [x] 2.2 Exponer resultados por `(topic, partition, offset)` y enlaces a ledger/orden; verificar el NEW original y su duplicado tardío tras FILLED, resultados con igual offset en particiones distintas y `result: null` sin clasificarlo como fallo.
+- [x] 2.3 Definir DTO de consola con enteros/decimales como cadenas y reportes como texto JSON, y comparación HTTP de ambas instancias en el servidor; verificar ida y vuelta de IDs mayores que `9007199254740991`, límites válidos de 64 bits y `999999999999.12345678` sin cambios en SQL ni redondeos.
+- [x] 2.4 Documentar en README estado actual frente a snapshot histórico, significado del contador y limitaciones de observación entre fuentes; verificar los ejemplos con los resultados de las integraciones de este grupo.
 
 ## 3. Lectura y publicación Kafka
 
