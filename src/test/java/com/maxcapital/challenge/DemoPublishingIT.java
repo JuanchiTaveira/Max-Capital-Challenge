@@ -307,11 +307,11 @@ class DemoPublishingIT {
         .untilAsserted(
             () ->
                 assertThat(
-                        jdbc.queryForObject(
+                        jdbc.queryForList(
                             "SELECT applied_execution_count FROM app.orders WHERE numeric_order_id=?",
                             Long.class,
                             Long.parseLong(key)))
-                    .isEqualTo(count));
+                    .containsExactly(count));
   }
 
   HttpResponse<String> post(String path, Object body) throws Exception {

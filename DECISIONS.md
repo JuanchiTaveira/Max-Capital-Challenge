@@ -106,8 +106,8 @@ ledger anterior. Se devuelve el ledger completo; el ejercicio no requiere pagina
 
 ## 6. Recuperación y errores de procesamiento
 
-El listener primero completa la transacción SQL y después confirma sincrónicamente el
-offset Kafka. Se acepta la reentrega y se protege el efecto SQL con idempotencia. El
+El listener completa la transacción SQL dentro de una transacción Kafka de consumo;
+al retornar, confirma el offset junto con la salida elegible de F-04. Se acepta la reentrega y se protege el efecto SQL con idempotencia. El
 consumidor usa `read_committed` para excluir ER de transacciones productoras abortadas.
 Esto controla la visibilidad de la entrada; la base y Kafka siguen teniendo commits
 independientes.
@@ -134,36 +134,67 @@ sólo el prefijo aplicado, sin indicador persistente de incompletitud.
 
 Las pruebas actuales verifican rollback, duplicados, resultados inmutables y replay
 tras fallas SQL o una falla controlada de confirmación Kafka posterior al commit SQL.
-El smoke verifica persistencia y republicación después de reinicios. Todavía no inyectan una
-caída de proceso justo entre commit SQL y offset ni un rebalanceo durante una escritura.
-La recuperación completa de esas fronteras sigue pendiente de F-05.
+El smoke verifica persistencia y republicación después de reinicios. SettlementKafkaIT agrega una caída real de proceso tras SQL y una reasignación
+controlada; F-05 conserva pendientes las ampliaciones de recuperación operativa.
 
-## 7. Settlement: garantía pendiente
+## 7. Settlement: protocolo transaccional
 
-F-04 está en implementación. Su contrato v1 se proyecta del resultado inmutable
-APPLIED FILLED de F-03: identidad de orden/ER/ledger, posición de origen y cantidades
-finales. Las cantidades se normalizan como decimales planos y los identificadores
-se serializan como cadenas exactas. La reconstrucción no depende de reloj ni UUID;
-no necesita una migración SQL ni duplicar la intención en una outbox. APPLIED
-identifica la intención original, no una marca de envío pendiente. Un duplicado
-tardío con snapshot FILLED nunca habilita una salida. Esta decisión no demuestra
-todavía la coordinación Kafka; la garantía sigue pendiente hasta sus pruebas.
+F-04 deriva un settlement sólo del resultado original APPLIED FILLED. El resultado
+SQL contiene identidad de orden/ER/ledger, posición y cantidades finales: la
+intención se recupera sin otra tabla ni migración. Un DUPLICATE, incluido NEW tardío
+con snapshot FILLED, no origina salida. APPLIED identifica la aplicación original,
+no una marca mutable de envío pendiente.
 
-La publicación de settlement todavía no está implementada. FILLED deberá originar uno
-por orden y CANCELLED ninguno. Se descarta atribuir esa garantía a una outbox por sí
-sola: si el publicador envía y cae antes de registrar el envío, puede republicar el
-mismo evento.
+La proyección v1 normaliza cantidades como decimales planos, identificadores como
+cadenas exactas e identidad estable `settlement:<numericOrderId>`. No usa reloj ni
+UUID. El contrato debe mantenerse reconstruible al cambiar versiones. Un contrato
+que incluyera datos variables necesitaría persistirlos antes de poder reintentarlo.
 
-La solución también debe cubrir la caída después de guardar FILLED y antes de publicar:
-la reentrega sería un duplicado y no volvería a ejecutar la transición de dominio. Por
-eso la intención y los datos del settlement deben quedar recuperables junto con el
-resultado SQL, y la recuperación debe poder completar la publicación pendiente.
+El contenedor abre una transacción Kafka, invoca el caso de uso JDBC explícito,
+recibe su resultado después del commit SQL y publica si corresponde. Al retornar el
+listener, Kafka incorpora el offset siguiente con los metadatos vigentes del grupo
+y confirma salida y progreso en la misma transacción. KafkaTemplate y el gestor
+Kafka comparten ProducerFactory; el gestor JDBC sigue indicado por nombre. No hay
+commitSync independiente, transacción Kafka anidada ni commit distribuido SQL/Kafka.
 
-F-03 ya conserva resultados SQL por registro de entrada. F-04/F-05 deberán resolver
-y probar su coordinación con salidas y offset en Kafka, incluidos resultados
-inciertos del commit. Esa transacción Kafka de salida todavía no está implementada. La garantía deberá
-especificar qué observa un consumidor `read_committed`; los efectos externos de un
-consumidor arbitrario necesitan su propio contrato de idempotencia.
+Si SQL revierte no queda salida; si confirma y Kafka aborta, la reentrega conserva
+APPLIED FILLED y reconstruye el mismo settlement sin repetir la transición. Si Kafka
+confirma, su progreso evita volver a publicar esa posición. Republicar el mismo ER
+en otro offset produce DUPLICATE y cero salidas. La unicidad combina idempotencia SQL,
+resultado inmutable y transacción Kafka: ni un ID estable ni el productor idempotente
+por sí solos deduplican los reenvíos de negocio.
+
+Ante un commit Kafka incierto se detiene la sesión, se descarta el productor fallido
+y se reanuda desde offsets estables; no se interpreta timeout como aborto ni se hace
+seek al offset local. El AfterRollbackProcessor propio también cubre el error posterior
+al retorno del listener y nunca recupera mediante descarte. El fencing detiene al
+consumidor obsoleto. Cada instancia necesita un prefijo transaccional distinto;
+los metadatos de generación y la espera de offsets transaccionales pendientes son
+indispensables cuando una partición cambia de propietario.
+
+Un lector read_committed observa sólo salidas confirmadas: exactamente un registro
+por FILLED cubierto por la activación, cero por CANCELLED. SQL/HTTP pueden mostrar
+FILLED mientras la salida sigue pendiente. Las transacciones abiertas pueden demorar
+lecturas y recuperación. La garantía se refiere al registro publicado; los efectos
+externos de otro consumidor requieren su propio manejo de recuperación.
+
+Las pruebas SettlementKafkaIT verifican dos miembros del grupo y particiones distintas,
+rollback SQL, falla de envío, aborto después de send aceptado, respuesta perdida tras
+commit real, espera de offsets pendientes, kill de una JVM entre SQL y publicación y
+reasignación por max.poll.interval con rechazo del propietario anterior. La respuesta
+perdida es una inyección controlada debajo del wrapper de Spring, no un corte físico
+de red. El kill termina un proceso real de prueba, sin cerrar Spring ordenadamente.
+La evidencia final y el estado de implementación se conservan en README y OpenSpec.
+
+La activación sobre F-03 incluye APPLIED FILLED con offset pendiente; posiciones ya
+confirmadas no se liquidan retroactivamente, tampoco al republicar su terminal.
+Un ledger F-02 sin resultado original sigue deduplicándose y no inventa intención
+ni posición histórica. Se conservan base, grupo, topics, particiones y retención.
+Detener ambas aplicaciones evita consumidores mixtos: volver a F-03 podría confirmar
+pendientes sin publicar y no es un rollback seguro. No se garantiza recuperación
+tras borrado de volúmenes, resets de offsets, recreación de topics o escrituras
+externas al topic de settlement. F-05 amplía los casos de falla y recuperación;
+F-06 mantiene pendientes cuarentena y recuperación de errores permanentes.
 
 ## 8. Límites y evidencia de las garantías
 
@@ -292,11 +323,10 @@ No hay purga durante el challenge; retención productiva debe coordinar replay y
 resultados. Recreación de topics, cambios de cluster y resets arbitrarios quedan
 fuera del contrato.
 
-El resultado es una base durable para F-04, no una garantía de settlement. SQL y
-Kafka conservan commits independientes y todavía no se publica ninguna salida.
-F-04 debe definir los datos de salida y coordinar publicación/progreso Kafka;
-F-05 debe comprobar qué observa un consumidor downstream `read_committed` ante
-caídas y rebalanceos. Actualmente `read_committed` sólo controla la entrada.
+F-04 usa este resultado como intención durable y coordina salida/progreso Kafka
+según la sección 7. SQL y Kafka conservan commits independientes. Las garantías
+SQL de F-03 por sí solas no demuestran unicidad de publicación; la evidencia de
+settlement se verifica por separado con read_committed y fallas de transacción.
 
 ## 10. Consola local de evaluación
 

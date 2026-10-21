@@ -1,14 +1,13 @@
 package com.maxcapital.challenge.adapter.in.kafka;
 
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
+import com.maxcapital.challenge.application.HandleExecutionReport;
 import com.maxcapital.challenge.application.InputPosition;
-import com.maxcapital.challenge.application.ProcessExecutionReport;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -16,11 +15,11 @@ import org.springframework.stereotype.Component;
 public class ExecutionReportListener {
   private static final Logger LOG = LoggerFactory.getLogger(ExecutionReportListener.class);
   private final ExecutionReportParser parser;
-  private final ProcessExecutionReport processor;
+  private final HandleExecutionReport handler;
 
-  public ExecutionReportListener(ExecutionReportParser parser, ProcessExecutionReport processor) {
+  public ExecutionReportListener(ExecutionReportParser parser, HandleExecutionReport handler) {
     this.parser = parser;
-    this.processor = processor;
+    this.handler = handler;
   }
 
   @KafkaListener(
@@ -28,20 +27,19 @@ public class ExecutionReportListener {
       idIsGroup = false,
       topics = "${app.execution-reports-topic:execution-reports}",
       containerFactory = "executionReportContainerFactory")
-  public void consume(ConsumerRecord<String, byte[]> record, Acknowledgment acknowledgment) {
+  public void consume(ConsumerRecord<String, byte[]> record) {
     try {
       var parsed = parser.parse(record.key(), record.value());
       var result =
-          processor.process(
+          handler.handle(
               new InputPosition(record.topic(), record.partition(), record.offset()),
               parsed.report(),
               parsed.payload());
       LOG.debug(
-          "ER resuelto: position={} outcome={} ledgerId={}",
+          "ER resuelto en SQL, pendiente de commit Kafka: position={} outcome={} ledgerId={}",
           result.position(),
           result.outcome(),
           result.ledgerId());
-      acknowledgment.acknowledge();
     } catch (RuntimeException exception) {
       LOG.error(
           "ER pendiente: topic={} partition={} offset={} numericOrderId/key={} cause={}",

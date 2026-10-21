@@ -16,9 +16,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
@@ -37,10 +37,10 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
-import org.springframework.kafka.core.ConsumerFactory;
-import org.springframework.kafka.core.ConsumerPostProcessor;
-import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.listener.AcknowledgingMessageListener;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.core.ProducerPostProcessor;
+import org.springframework.kafka.listener.MessageListener;
 import org.springframework.kafka.listener.MessageListenerContainer;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -81,7 +81,7 @@ class ExecutionReportKafkaIT {
 
   @Autowired JdbcTemplate jdbc;
   @Autowired KafkaListenerEndpointRegistry registry;
-  @Autowired ConsumerFactory<Object, Object> consumers;
+  @Autowired ProducerFactory<Object, Object> producers;
 
   @Autowired
   ConcurrentKafkaListenerContainerFactory<Object, Object> executionReportContainerFactory;
@@ -92,7 +92,8 @@ class ExecutionReportKafkaIT {
   static void topics() throws Exception {
     try (var admin = admin()) {
       admin
-          .createTopics(List.of(new NewTopic(TOPIC, 2, (short) 1)))
+          .createTopics(
+              List.of(new NewTopic(TOPIC, 2, (short) 1), new NewTopic("settlements", 2, (short) 1)))
           .all()
           .get(20, TimeUnit.SECONDS);
     }
@@ -254,15 +255,15 @@ class ExecutionReportKafkaIT {
     // GIVEN
     listener().stop();
     var fail = new AtomicBoolean(true);
-    var factory = (DefaultKafkaConsumerFactory<Object, Object>) consumers;
-    ConsumerPostProcessor<Object, Object> interceptor =
+    var factory = (DefaultKafkaProducerFactory<Object, Object>) producers;
+    ProducerPostProcessor<Object, Object> interceptor =
         delegate ->
-            (Consumer<Object, Object>)
+            (Producer<Object, Object>)
                 Proxy.newProxyInstance(
-                    Consumer.class.getClassLoader(),
-                    new Class<?>[] {Consumer.class},
+                    Producer.class.getClassLoader(),
+                    new Class<?>[] {Producer.class},
                     (proxy, method, arguments) -> {
-                      if (method.getName().equals("commitSync")
+                      if (method.getName().equals("commitTransaction")
                           && fail.get()
                           && jdbc.queryForObject(
                                   "SELECT count(*) FROM app.processing_results WHERE numeric_order_id=750",
@@ -278,6 +279,7 @@ class ExecutionReportKafkaIT {
                         throw exception.getCause();
                       }
                     });
+    factory.reset();
     factory.addPostProcessor(interceptor);
     try (var producer = producer(false)) {
       // WHEN
@@ -335,8 +337,7 @@ class ExecutionReportKafkaIT {
       }
       var container = executionReportContainerFactory.createContainer(topic);
       container.getContainerProperties().setGroupId(topic);
-      container.setupMessageListener(
-          (AcknowledgingMessageListener<String, byte[]>) reportListener::consume);
+      container.setupMessageListener((MessageListener<String, byte[]>) reportListener::consume);
       try (var producer = producer(false)) {
         container.start();
         await()

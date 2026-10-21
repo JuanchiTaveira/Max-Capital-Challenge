@@ -4,4 +4,5 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /smoke
 COPY verify-f02.py .
 COPY verify-console.py .
+COPY verify-f04.py .
 ENTRYPOINT ["python", "-u", "/smoke/verify-f02.py"]

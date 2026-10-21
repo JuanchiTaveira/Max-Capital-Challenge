@@ -43,9 +43,9 @@ Esta tabla es la única fuente del estado de implementación.
 | F-08 | Integración continua — opcional | Pendiente |
 | F-09 | Consola local de evaluación | Implementado |
 
-## Prerrequisitos y versiones
+## Settlement transaccional de F-04
 
-### Contrato de settlement v1 (F-04 en implementación)
+### Contrato de settlement v1
 
 El contrato de salida usa JSON UTF-8 en `settlements`, con key igual al
 `numericOrderId` decimal. `schemaVersion` es el entero 1; `settlementId` vale
@@ -56,7 +56,68 @@ fraccionarios innecesarios; cero se representa como `"0"`.
 
 La salida se reconstruye sólo de un resultado SQL original APPLIED FILLED.
 CANCELLED y DUPLICATE no generan salidas, aunque el snapshot del duplicado sea
-FILLED. La implementación completa y su evidencia siguen pendientes en la tabla.
+FILLED. La evidencia de implementación completa se registra en la tabla de features.
+
+### Publicación, recuperación y activación
+
+El contenedor confirma el settlement y el offset siguiente en una sola transacción
+Kafka después del commit SQL. No hay commit distribuido: la consulta HTTP puede
+mostrar FILLED antes de que read_committed observe el settlement. Ante aborto Kafka
+se recupera el resultado SQL; ante commit incierto se detiene la sesión y se retoma
+desde offsets estables, sin reenviar desde una posición local vieja.
+
+El diagnóstico ER pendiente incluye posición y causa. También un fallo posterior
+al retorno del listener detiene el contenedor; no descarta el registro tras varios
+intentos. Resolver la dependencia/falla y reiniciar la aplicación para reanudar:
+
+```sh
+docker compose restart app-1
+```
+
+Para actualizar desde F-03, detener ambas aplicaciones y reconstruirlas juntas:
+
+```sh
+docker compose stop app-1 app-2
+docker compose up -d --build --wait app-1 app-2
+```
+
+No hay migración SQL nueva ni backfill: un APPLIED FILLED de F-03 con offset pendiente
+sí se publica al recuperarse; una posición ya confirmada queda fuera de la activación.
+Su terminal republicado es DUPLICATE y no genera una salida retroactiva. Un ledger
+legado de F-02 sin resultado APPLIED conserva la deduplicación existente; no se
+inventan posiciones históricas.
+
+Conservar los prefijos INSTANCE_ID distintos, el mismo grupo, base, cluster, topics,
+particiones y retención. No resetear offsets ni borrar volúmenes. Volver a F-03
+puede confirmar pendientes sin settlement: ante un despliegue fallido detener ambas
+instancias y conservar el estado para corregir hacia adelante.
+
+La vista Mensajes de la consola ya inspecciona settlements como read_committed.
+El escenario guiado de settlement sigue pendiente de implementación; la disponibilidad
+del núcleo no lo habilita automáticamente.
+
+### Verificación portable de settlement
+
+Con el entorno levantado, ejecutar desde la raíz:
+
+```sh
+docker compose --profile tools run --build --rm verify-f04
+```
+
+El runner reutiliza el socket Docker local y la lectura `read_committed` de la
+consola. Comprueba dos miembros con una partición cada uno, publica órdenes nuevas
+FILLED/CANCELLED y republica terminales y un NEW tardío. Recorre ambas particiones
+de salida desde sus posiciones iniciales hasta el límite estable observado, y
+verifica exactamente un settlement para FILLED y cero para CANCELLED, junto con
+estado, contador, ledger y referencias del mensaje. No resetea offsets ni borra
+datos. Ejecutar smokes secuencialmente sobre la demo.
+
+La salida incluye IDs, posición Kafka y JSON completos para repetir la inspección.
+Este smoke no inyecta fallas entre commits: esas pruebas están en SettlementKafkaIT
+y se ejecutan con `.\mvnw.cmd verify`. La prueba con pérdida de respuesta delega un
+commit real y después inyecta timeout; no representa un corte físico de red.
+
+## Prerrequisitos y versiones
 
 Para ejecutar: Docker con contenedores Linux y Docker Compose, acceso a internet en
 el primer build y puertos 8081, 8082, 8083, 9092 y 15432 disponibles. Reservar al menos
@@ -343,7 +404,7 @@ tenía ambas particiones, ambas se detienen. Tras resolver una falla transitoria
 reiniciar la aplicación retoma desde el offset pendiente. Un ER inválido vuelve
 a fallar al reiniciar: F-06 incorporará cuarentena y recuperación ordenada.
 F-03 incorpora resultados por posición; F-05 cubrirá más fronteras de caída y
-rebalanceo. Todavía no se publican settlements.
+rebalanceo. F-04 incorpora la coordinación transaccional del settlement.
 
 ### Resultados persistidos de F-03
 

@@ -327,13 +327,26 @@ class ProcessingResultsIT {
                   .isEqualTo("FILLED");
               outputs.add(SettlementJson.encode(settlement));
             });
-    apply(context, 550, 0, report(550, 1, "NEW", 0, 10));
+    var exact = "999999999999.12345678";
+    apply(
+        context,
+        550,
+        0,
+        report(550, 1, "NEW", 0, 10)
+            .replace("\"nominalAmounts\":10", "\"nominalAmounts\":" + exact)
+            .replace("\"leavesNominalAmount\":10", "\"leavesNominalAmount\":" + exact));
     jdbc.execute(
         "CREATE FUNCTION app.fail_settlement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.numeric_order_id=550 AND NEW.fix_id=2 THEN RAISE EXCEPTION 'rollback before publication'; END IF; RETURN NEW; END $$");
     jdbc.execute(
         "CREATE TRIGGER fail_settlement BEFORE INSERT ON app.processing_results FOR EACH ROW EXECUTE FUNCTION app.fail_settlement()");
     var parsed =
-        parser.parse("550", report(550, 2, "FILLED", 10, 0).getBytes(StandardCharsets.UTF_8));
+        parser.parse(
+            "550",
+            report(550, 2, "FILLED", 10, 0)
+                .replace("\"nominalAmounts\":10", "\"nominalAmounts\":" + exact)
+                .replace(
+                    "\"accumulativeNominalAmount\":10", "\"accumulativeNominalAmount\":" + exact)
+                .getBytes(StandardCharsets.UTF_8));
     var position = new InputPosition("results-550", 0, 1);
     try {
       assertThat(catchThrowable(() -> handler.handle(position, parsed.report(), parsed.payload())))
@@ -355,6 +368,8 @@ class ProcessingResultsIT {
     restarted.handle(new InputPosition("results-550", 0, 2), parsed.report(), parsed.payload());
     assertThat(outputs).hasSize(2);
     assertThat(outputs.get(1)).isEqualTo(outputs.get(0));
+    assertThat(new String(outputs.getFirst(), StandardCharsets.UTF_8))
+        .contains("\"nominalAmounts\":\"" + exact + "\"");
     assertCounts(550, 2, 2, 3);
   }
 
