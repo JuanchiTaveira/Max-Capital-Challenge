@@ -139,6 +139,47 @@ controlada; F-05 conserva pendientes las ampliaciones de recuperación operativa
 
 ## 7. Settlement: protocolo transaccional
 
+### Recuperación ampliada en F-05: evidencia del núcleo
+
+`RecoveryKafkaIT` ejercita el camino real de la aplicación con PostgreSQL y Kafka,
+incluyendo procesos JVM terminados abruptamente. Su primera ejecución dirigida
+completó cuatro casos sin fallas ni omisiones; el cierre global y los recorridos
+de consola todavía deben verificar la ampliación completa.
+
+| Frontera | Estrategia y observación exigida |
+| --- | --- |
+| SQL abierto, antes del commit | El cierre abrupto de la conexión revierte el intento; el nuevo propietario aplica la misma posición una vez, sin orden parcial, contador ni ledger sobrante. |
+| SQL confirmado, Kafka pendiente | Se recupera el resultado APPLIED original, sin recomputar su snapshot ni repetir efectos; se completa settlement y progreso mediante Kafka. |
+| Send aceptado sin commit Kafka | La aceptación del envío no habilita visibilidad read_committed. Se resuelve el intento abierto y se recupera la posición desde progreso estable. |
+| Commit Kafka confirmado con respuesta perdida | Se detiene la sesión incierta; otra sesión consulta progreso estable y no vuelve a publicar una finalización confirmada. La evidencia de respuesta perdida sigue siendo la inyección controlada de F-04. |
+| Reasignación con SQL abierto | La pérdida de pertenencia no cancela SQL. El intento anterior puede confirmar o revertir; lock, segunda búsqueda y resultado por posición serializan el efecto. Kafka rechaza la confirmación del propietario obsoleto. |
+| Caída de ambas aplicaciones | Datos SQL y offsets Kafka sobreviven en sus servicios; reiniciar las aplicaciones recupera pendientes y permite continuar en ambas particiones. No depende de memoria del proceso anterior. |
+
+La recuperación del grupo por una instancia sobreviviente y el reinicio operativo
+de una sesión detenida son mecanismos distintos. No se agrega un supervisor que
+reinicie automáticamente cualquier error: clasificación, cuarentena y recuperación
+de errores permanentes siguen correspondiendo a F-06.
+
+La instrumentación de ensayo vive en wiring de demo y adaptadores, fuera del dominio.
+Las barreras JDBC distinguen escrituras sin confirmar del resultado visible desde
+otra conexión; la barrera de salida espera aceptación real de Kafka dentro de la
+transacción del contenedor. Se seleccionan una identidad de ER y un intento, se
+consumen una vez y vencen; los controles desaparecen al reiniciar y están ausentes
+por defecto. No forman parte del protocolo durable de recuperación.
+
+Para evaluar secuencia no basta observar una reasignación: se deben finalizar ambos
+intentos, verificar rechazo del anterior y aplicar sucesores. Para evaluar unicidad
+no basta una página vacía: se recorren ambas particiones read_committed después de
+resolver transacciones abiertas. El ID estable sirve para correlación; no suprime
+publicaciones duplicadas por sí solo.
+
+Los tests de consola con Docker sustituido sólo demuestran coordinación. La evidencia
+de procesos y los smokes Compose se registran separadamente en OpenSpec; no se
+atribuyen al simple acceso HTTP o a un listener detenido. La consola conserva
+resultados de ejecución en memoria y no promete reanudarlos tras perder su proceso.
+Si se cancela, sus publicaciones confirmadas pueden completarse al restaurar consumo;
+no se borran ni se compensan datos de negocio para limpiar un ensayo.
+
 F-04 deriva un settlement sólo del resultado original APPLIED FILLED. El resultado
 SQL contiene identidad de orden/ER/ledger, posición y cantidades finales: la
 intención se recupera sin otra tabla ni migración. Un DUPLICATE, incluido NEW tardío
