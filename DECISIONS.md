@@ -213,6 +213,7 @@ recuperación se repiten para distinguir la falla del nuevo intento.
 
 | Prioridad | Clase | Qué permite evaluar |
 | --- | --- | --- |
+| Primera | [SettlementKafkaIT](src/test/java/com/maxcapital/challenge/SettlementKafkaIT.java) | Salida/offset transaccionales, commit incierto, dos instancias, kill de proceso y reasignación. |
 | Primera | [ExecutionReportKafkaIT](src/test/java/com/maxcapital/challenge/ExecutionReportKafkaIT.java) | Consumo real con Kafka/PostgreSQL, secuencia por orden, reentrega y offsets pendientes ante fallas. |
 | Primera | [ProcessingResultsIT](src/test/java/com/maxcapital/challenge/ProcessingResultsIT.java) | Atomicidad SQL, concurrencia entre contextos de aplicación y recuperación de resultados durables. |
 | Respaldo del núcleo | [OrderPersistenceIT](src/test/java/com/maxcapital/challenge/OrderPersistenceIT.java) | Consistencia de estado, contador y ledger; snapshots y deduplicación de terminales. |
@@ -275,10 +276,11 @@ descartan silenciosamente, que el offset no avanza y que se conserva diagnóstic
 También muestran el bloqueo actual: al reiniciar, el mensaje inválido vuelve a
 fallar. No prueban una solución al bloqueo indefinido.
 
-Según el estado del README, settlement, recuperación completa ante caídas y
-rebalanceos y cuarentena continúan pendientes en F-04, F-05 y F-06. Ninguna de
-estas pruebas demuestra publicación de settlement exactamente una vez; la
-visibilidad `read_committed` verificada corresponde a la entrada.
+Las pruebas de F-02/F-03 anteriores no demuestran por sí solas unicidad de settlement.
+La evidencia adicional de SettlementKafkaIT se describe en la sección 7 y en el
+verification.md de F-04: incluye una JVM terminada tras SQL y reasignación real,
+además de abortos y commits de respuesta incierta. F-05 conserva ampliaciones de
+recuperación y F-06 cuarentena; el estado de cada feature sigue en README.
 
 ## 9. Resultado por posición Kafka
 

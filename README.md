@@ -6,6 +6,8 @@ en la raíz del repositorio.
 F-01 aporta infraestructura y herramientas; F-02 procesa ER en secuencia por orden,
 persiste estado y ledger y los expone por HTTP desde las dos instancias. F-03
 conserva el resultado de cada posición Kafka resuelta para recuperarlo en reentregas.
+F-04 publica settlement y confirma el progreso de entrada en una transacción Kafka,
+con recuperación desde esos resultados SQL.
 
 ## Guía rápida para evaluar
 
@@ -15,7 +17,7 @@ Ejecutar los comandos desde la raíz del repositorio, con Docker activo:
 2. Abrir [la consola de evaluación](http://localhost:8083). Empieza por **Dos órdenes en paralelo**: leer **Qué demuestra**, **Qué vamos a hacer** y **Qué debería pasar**; elegir **Automático** y pulsar **Ejecutar escenario**.
 3. Leer la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**, sin abrir JSON. **Ir al siguiente escenario** sólo lo selecciona; no publica nada. **Ejecutar todos** recorre los cinco y permite consultar cada resultado por separado. Los tres pendientes quedan aparte.
 4. En modo **Paso a paso**, leer qué hará **Continuar paso** antes de pulsarlo; recargar conserva la ejecución y el escenario seleccionado por URL mientras la consola siga ejecutándose. **Evidencia técnica** contiene posiciones, snapshots y enlaces para inspeccionar órdenes, ledger y mensajes. En **Mensajes**, el editor permite publicar un NEW y luego un FILLED para la misma key, o republicar exactamente un registro.
-5. En **Sistema**, observar salud, consumo, asignaciones y offsets; detener/iniciar o terminar abruptamente una aplicación desde sus controles. Las caídas entre commits, settlement y recuperación de mensajes permanentes continúan pendientes de F-04 a F-06.
+5. En **Sistema**, observar salud, consumo, asignaciones y offsets; detener/iniciar o terminar abruptamente una aplicación desde sus controles. Los escenarios guiados de caídas entre commits, settlement y mensajes permanentes siguen pendientes; F-04 tiene su verificación propia por suite y smoke.
 
 El evaluador sólo necesita Docker y un navegador. La verificación portable por API
 se ejecuta con `docker compose --profile tools run --build --rm verify-console`:
@@ -36,7 +38,7 @@ Esta tabla es la única fuente del estado de implementación.
 | F-01 | Entorno, OpenSpec, AGENTS.md y Spotless | Implementado |
 | F-02 | Procesamiento y consulta de órdenes | Implementado |
 | F-03 | Idempotencia y resultados persistidos | Implementado |
-| F-04 | Settlement transaccional | Pendiente |
+| F-04 | Settlement transaccional | Implementado |
 | F-05 | Recuperación ante caídas y rebalanceos | Pendiente |
 | F-06 | Cuarentena y recuperación ordenada | Pendiente |
 | F-07 | Entrega reproducible y documentación | Pendiente |
@@ -232,7 +234,7 @@ El catálogo ofrece órdenes intercaladas, snapshots con reloj no creciente,
 duplicados terminales/tardíos, persistencia después de reiniciar y visibilidad de
 transacciones confirmadas/abortadas. Cada escenario informa precondiciones,
 resultado esperado y verificaciones reales; **Ejecutar todos** recorre sólo
-esos cinco y deja explícitos los pendientes de F-04/F-05/F-06. La consola no emite
+esos cinco y deja explícitos los escenarios pendientes de F-04/F-05/F-06. La consola no emite
 poison intencional ni certifica settlement o caídas entre commits.
 
 Sólo se admite una ejecución activa. El modo paso a paso permite inspeccionar
@@ -653,12 +655,21 @@ en Windows; errores de acceso al motor y selección de proyecto comprobados.
 
 Kafka usa un solo broker: el entorno verifica caídas de aplicaciones y reinicios,
 no supervivencia a pérdida física del volumen. La presencia de transacciones Kafka
-no demuestra por sí sola settlement exactamente una vez. Esa garantía queda
-pendiente de F-04/F-05.
+no demuestra por sí sola settlement exactamente una vez. Esa garantía se verifica
+por separado mediante SettlementKafkaIT y el smoke F-04.
 
 [Evidencia de F-03](openspec/changes/archive/2026-10-19-f03-persisted-processing-results/verification.md):
 suite completa con 5 unitarias y 21 integraciones, resultados inmutables,
 concurrencia y rollback SQL, falla controlada de confirmación Kafka posterior al
 commit SQL, migración V1→V2 conservando datos, smoke de dos instancias y prueba
-manual Windows PowerShell. Las caídas reales/rebalanceos durante escritura y el
-settlement siguen pendientes en F-04/F-05.
+manual Windows PowerShell. Esa evidencia histórica no cubre settlement ni caídas
+reales durante escritura; F-04 agrega sus propias pruebas y F-05 amplía recuperación.
+
+[Evidencia de F-04](openspec/changes/archive/2026-10-21-f04-transactional-settlement/verification.md):
+9 unitarias y 46 integraciones en la suite completa, cero fallas/omisiones. Incluye
+settlement con dos miembros reales, rollback SQL, aborto de salida, respuesta de
+commit perdida, offsets pendientes, kill de una JVM tras SQL y reasignación real.
+El smoke portable verificó FILLED=1, CANCELLED=0 y republicaciones sin otra salida.
+SQL y Kafka tienen commits independientes; read_committed observa una única salida
+confirmada por orden cubierta, bajo los supuestos documentados. F-05 y F-06 siguen
+pendientes.

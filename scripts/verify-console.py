@@ -156,7 +156,7 @@ def main():
         require(order_snapshot(order) == snapshot, f"Se modificó una orden previa: {order}")
     print(f"CONSOLE OK run={run_id} scenarios=5 pending=3 previousOrders={len(before)}", flush=True)
     print("Consola: http://localhost:8083 · se conservan órdenes, mensajes y volúmenes.", flush=True)
-    print("El kill manual no demuestra fronteras de commit F-05; F-04/F-05/F-06 siguen pendientes.", flush=True)
+    print("El kill manual no certifica fronteras de commit. Los tres escenarios guiados siguen pendientes; ver README para el estado del núcleo.", flush=True)
 
 
 if __name__ == "__main__":

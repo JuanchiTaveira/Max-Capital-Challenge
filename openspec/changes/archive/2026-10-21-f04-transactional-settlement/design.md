@@ -299,7 +299,7 @@ operativa. No se atribuye a estas pruebas cobertura de todas esas combinaciones.
 
 ## References
 
-- [Enunciado](../../../challenge-arch-max-capital.pdf), efecto terminal y evidencia
+- [Enunciado](../../../../challenge-arch-max-capital.pdf), efecto terminal y evidencia
   con dos instancias y reentrega; formato de settlement no especificado.
 - [Spring Kafka 4.1.1: EOS](https://docs.spring.io/spring-kafka/reference/kafka/exactly-once.html).
 - [Spring Kafka: manejo de errores y AfterRollbackProcessor](https://docs.spring.io/spring-kafka/reference/kafka/annotation-error-handling.html).

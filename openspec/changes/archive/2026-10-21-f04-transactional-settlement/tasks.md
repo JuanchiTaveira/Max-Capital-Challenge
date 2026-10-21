@@ -41,8 +41,8 @@
 
 ## 6. Integración y cierre de evidencia
 
-- [ ] 6.1 Ejecutar .\mvnw.cmd spotless:apply sobre Java editado y después .\mvnw.cmd spotless:check y .\mvnw.cmd verify con Docker; comprobar que pasan todas las suites, incluidos kill/reasignación, sin tests omitidos y con cleanup de procesos propios. Registrar comandos y resultados; si una dependencia impide verificar, conservar F-04 pendiente e informar el bloqueo.
-- [ ] 6.2 Revisar la correspondencia de todos los escenarios de las dos delta specs con pruebas/evidencia en verification.md; ejecutar openspec validate --all --strict y git diff --check, comprobar conservación de invariantes F-02/F-03 y cambiar únicamente F-04 a implementado en README cuando todos sus criterios estén observados. Verificar coherencia final entre README, DECISIONS, specs, tareas y evidencia, conservando commits locales por unidad y sin push.
+- [x] 6.1 Ejecutar .\mvnw.cmd spotless:apply sobre Java editado y después .\mvnw.cmd spotless:check y .\mvnw.cmd verify con Docker; comprobar que pasan todas las suites, incluidos kill/reasignación, sin tests omitidos y con cleanup de procesos propios. Registrar comandos y resultados; si una dependencia impide verificar, conservar F-04 pendiente e informar el bloqueo.
+- [x] 6.2 Revisar la correspondencia de todos los escenarios de las dos delta specs con pruebas/evidencia en verification.md; ejecutar openspec validate --all --strict y git diff --check, comprobar conservación de invariantes F-02/F-03 y cambiar únicamente F-04 a implementado en README cuando todos sus criterios estén observados. Verificar coherencia final entre README, DECISIONS, specs, tareas y evidencia, conservando commits locales por unidad y sin push.
 
 ## Workflow follow-up
 

@@ -2,8 +2,8 @@
 
 ## Estado de la evidencia
 
-Implementación y pruebas dirigidas ejecutadas el 2026-10-21. La verificación global
-y el recorrido Compose se completan antes de cambiar el estado F-04 del README.
+Implementación, pruebas dirigidas, suite global y recorrido Compose completados
+el 2026-10-21. El README marca únicamente F-04 como implementada tras esta evidencia.
 No se atribuye evidencia a la existencia de una tarea marcada ni a un build de imagen.
 
 ## Comandos observados
@@ -98,4 +98,25 @@ La suite global inicial encontró dos esperas frágiles de DemoPublishingIT: con
 una fila todavía ausente mediante queryForObject, cuya excepción no era reintentada
 por Awaitility. El helper ahora espera una lista con exactamente el contador esperado;
 el resultado exigido sigue siendo el mismo y el plazo continúa en 30 segundos.
-La validación global final debe pasar antes de declarar F-04 implementada.
+La corrección pasó por separado en DemoPublishingIT y después en la suite global completa.
+
+## Cierre global
+
+- `.\mvnw.cmd spotless:apply` y `.\mvnw.cmd spotless:check`: SUCCESS.
+- `.\mvnw.cmd verify`: BUILD SUCCESS; 9 unitarias y 46 integraciones, cero fallas,
+  errores y omisiones, según los XML de Surefire/Failsafe y el resumen de Maven.
+- La suite global final incluye precisión SQL con ocho decimales, el helper de espera
+  de consola corregido y los 9 casos de SettlementKafkaIT sin omisiones.
+- `openspec validate --all --strict` y `git diff --check`: sin errores antes del cierre;
+  se repiten al sincronizar y archivar las specs.
+- No se cambió el contrato HTTP, las migraciones V1/V2, la UI ni las disponibilidades
+  de escenarios guiados. El cambio de verify-console sólo aclara su mensaje final.
+- F-04 se entrega con commits locales; no se hizo push ni se eliminaron datos ajenos.
+  F-05 y F-06 mantienen su estado pendiente.
+
+Las 26 tareas quedaron completas. Se creó la spec principal settlement-publication
+y se actualizó sólo Commit after persistence en execution-report-consumption,
+preservando título, propósito y los demás requisitos. La comparación de ambas
+delta specs contra sus destinos no dejó cambios pendientes de sincronización.
+Después del archivo, `openspec list --json` devolvió cero changes activos y
+`openspec validate --all --strict` validó las 10 specs, cero errores.
