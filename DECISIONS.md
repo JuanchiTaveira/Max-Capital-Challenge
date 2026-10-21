@@ -140,6 +140,15 @@ La recuperación completa de esas fronteras sigue pendiente de F-05.
 
 ## 7. Settlement: garantía pendiente
 
+F-04 está en implementación. Su contrato v1 se proyecta del resultado inmutable
+APPLIED FILLED de F-03: identidad de orden/ER/ledger, posición de origen y cantidades
+finales. Las cantidades se normalizan como decimales planos y los identificadores
+se serializan como cadenas exactas. La reconstrucción no depende de reloj ni UUID;
+no necesita una migración SQL ni duplicar la intención en una outbox. APPLIED
+identifica la intención original, no una marca de envío pendiente. Un duplicado
+tardío con snapshot FILLED nunca habilita una salida. Esta decisión no demuestra
+todavía la coordinación Kafka; la garantía sigue pendiente hasta sus pruebas.
+
 La publicación de settlement todavía no está implementada. FILLED deberá originar uno
 por orden y CANCELLED ninguno. Se descarta atribuir esa garantía a una outbox por sí
 sola: si el publicador envía y cae antes de registrar el envío, puede republicar el

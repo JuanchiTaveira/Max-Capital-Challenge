@@ -8,6 +8,8 @@ import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
 import com.maxcapital.challenge.adapter.out.jdbc.JdbcOrderRepository;
 import com.maxcapital.challenge.adapter.out.jdbc.JdbcProcessingResults;
 import com.maxcapital.challenge.adapter.out.jdbc.OrderTransactionConfiguration;
+import com.maxcapital.challenge.adapter.out.kafka.SettlementJson;
+import com.maxcapital.challenge.application.HandleExecutionReport;
 import com.maxcapital.challenge.application.InputPosition;
 import com.maxcapital.challenge.application.ProcessExecutionReport;
 import com.maxcapital.challenge.application.ProcessingResult;
@@ -303,6 +305,57 @@ class ProcessingResultsIT {
     assertThat(known.outcome()).isEqualTo(Outcome.DUPLICATE);
     assertThat(known.ledgerId()).isEqualTo(ledger);
     assertCounts(540, 1, 1, 1);
+  }
+
+  @Test
+  void publishesAfterSqlCommitAndRecoversTheExactOutputWithoutPublishingOnRollback() {
+    var outputs = new java.util.ArrayList<byte[]>();
+    var handler =
+        new HandleExecutionReport(
+            context.getBean(ProcessExecutionReport.class),
+            settlement -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              assertThat(
+                      new JdbcTemplate(source())
+                          .queryForObject(
+                              "SELECT status FROM app.orders WHERE numeric_order_id=?",
+                              String.class,
+                              settlement.numericOrderId()))
+                  .isEqualTo("FILLED");
+              outputs.add(SettlementJson.encode(settlement));
+            });
+    apply(context, 550, 0, report(550, 1, "NEW", 0, 10));
+    jdbc.execute(
+        "CREATE FUNCTION app.fail_settlement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.numeric_order_id=550 AND NEW.fix_id=2 THEN RAISE EXCEPTION 'rollback before publication'; END IF; RETURN NEW; END $$");
+    jdbc.execute(
+        "CREATE TRIGGER fail_settlement BEFORE INSERT ON app.processing_results FOR EACH ROW EXECUTE FUNCTION app.fail_settlement()");
+    var parsed =
+        parser.parse("550", report(550, 2, "FILLED", 10, 0).getBytes(StandardCharsets.UTF_8));
+    var position = new InputPosition("results-550", 0, 1);
+    try {
+      assertThat(catchThrowable(() -> handler.handle(position, parsed.report(), parsed.payload())))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(outputs).isEmpty();
+      assertCounts(550, 1, 1, 1);
+    } finally {
+      jdbc.execute("DROP TRIGGER fail_settlement ON app.processing_results");
+      jdbc.execute("DROP FUNCTION app.fail_settlement()");
+    }
+    handler.handle(position, parsed.report(), parsed.payload());
+    context.close();
+    context = application();
+    var restarted =
+        new HandleExecutionReport(
+            context.getBean(ProcessExecutionReport.class),
+            s -> outputs.add(SettlementJson.encode(s)));
+    restarted.handle(position, parsed.report(), parsed.payload());
+    restarted.handle(new InputPosition("results-550", 0, 2), parsed.report(), parsed.payload());
+    assertThat(outputs).hasSize(2);
+    assertThat(outputs.get(1)).isEqualTo(outputs.get(0));
+    assertCounts(550, 2, 2, 3);
   }
 
   private ProcessingResult apply(

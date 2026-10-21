@@ -2,10 +2,10 @@
 
 ## 1. Contrato y decisión de settlement
 
-- [ ] 1.1 Agregar el valor de aplicación Settlement y su proyección desde ProcessingResult según la spec v1; verificar elegibilidad APPLIED FILLED, exclusión de CANCELLED/DUPLICATE y el duplicado tardío de NEW con snapshot FILLED mediante pruebas de la decisión.
-- [ ] 1.2 Implementar serialización JSON UTF-8 con key canónica, identidad estable, source completo e IDs/cantidades como cadenas; verificar igualdad de reconstrucción antes/después de recuperar NUMERIC y resultados SQL, IDs fuera del rango seguro JavaScript y ocho decimales sin redondeos.
-- [ ] 1.3 Agregar SettlementPublisher y HandleExecutionReport para coordinar el procesador JDBC existente y la salida, conservando explícito orderTransactionManager; verificar con una prueba de integración que la publicación sólo se intenta después de SQL confirmado y que un rollback SQL no llama al publicador.
-- [ ] 1.4 Documentar en DECISIONS la proyección determinística, la intención recuperable y el contrato propuesto; agregar el esquema de salida y su representación exacta al README, manteniendo F-04 pendiente mientras no exista evidencia completa. Verificar ejemplos contra el serializador y el resultado SQL de prueba.
+- [x] 1.1 Agregar el valor de aplicación Settlement y su proyección desde ProcessingResult según la spec v1; verificar elegibilidad APPLIED FILLED, exclusión de CANCELLED/DUPLICATE y el duplicado tardío de NEW con snapshot FILLED mediante pruebas de la decisión.
+- [x] 1.2 Implementar serialización JSON UTF-8 con key canónica, identidad estable, source completo e IDs/cantidades como cadenas; verificar igualdad de reconstrucción antes/después de recuperar NUMERIC y resultados SQL, IDs fuera del rango seguro JavaScript y ocho decimales sin redondeos.
+- [x] 1.3 Agregar SettlementPublisher y HandleExecutionReport para coordinar el procesador JDBC existente y la salida, conservando explícito orderTransactionManager; verificar con una prueba de integración que la publicación sólo se intenta después de SQL confirmado y que un rollback SQL no llama al publicador.
+- [x] 1.4 Documentar en DECISIONS la proyección determinística, la intención recuperable y el contrato propuesto; agregar el esquema de salida y su representación exacta al README, manteniendo F-04 pendiente mientras no exista evidencia completa. Verificar ejemplos contra el serializador y el resultado SQL de prueba.
 
 ## 2. Transacción Kafka del consumo y política de errores
 

@@ -45,6 +45,19 @@ Esta tabla es la única fuente del estado de implementación.
 
 ## Prerrequisitos y versiones
 
+### Contrato de settlement v1 (F-04 en implementación)
+
+El contrato de salida usa JSON UTF-8 en `settlements`, con key igual al
+`numericOrderId` decimal. `schemaVersion` es el entero 1; `settlementId` vale
+`settlement:<numericOrderId>`. `numericOrderId`, `fixId`, `ledgerId`, las cantidades
+y `source.offset` son cadenas decimales exactas. `source` incluye también topic
+y partition (entero). Las cantidades usan representación decimal plana sin ceros
+fraccionarios innecesarios; cero se representa como `"0"`.
+
+La salida se reconstruye sólo de un resultado SQL original APPLIED FILLED.
+CANCELLED y DUPLICATE no generan salidas, aunque el snapshot del duplicado sea
+FILLED. La implementación completa y su evidencia siguen pendientes en la tabla.
+
 Para ejecutar: Docker con contenedores Linux y Docker Compose, acceso a internet en
 el primer build y puertos 8081, 8082, 8083, 9092 y 15432 disponibles. Reservar al menos
 4 GB de RAM para Docker. Java y Maven del host no son necesarios para Compose.
