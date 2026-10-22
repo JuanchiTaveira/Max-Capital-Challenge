@@ -2,32 +2,36 @@
 
 ## Why
 
-Hoy un ER inválido detiene el consumidor y bloquea indefinidamente su partición. F-06 debe distinguir fallas transitorias de permanentes, conservar evidencia y permitir corregir el ER para recuperar la secuencia de su orden sin perder ni duplicar efectos.
+Un ER inválido hoy detiene el consumo sin un procedimiento de corrección. F-06 debe distinguir errores transitorios de permanentes, conservar el original y permitir retomar la secuencia. Para este challenge alcanza una solución pequeña que reutilice las garantías de F-04/F-05.
 
 ## What Changes
 
-- Clasificar errores explícitamente y reintentar fallas transitorias conocidas sobre la misma posición, con presupuesto durable, backoff exponencial y jitter. Fallas de infraestructura agotadas y commits Kafka inciertos permanecen pendientes con diagnóstico operativo.
-- Publicar rechazos permanentes en `execution-reports-rejected` junto al progreso de entrada en una transacción Kafka, después de persistir original, diagnóstico y bloqueo. No convertir cuarentena en éxito de negocio.
-- Retener durablemente sucesores de la orden afectada, permitiendo continuar otras órdenes identificables. Ante identidad ambigua, retener la partición hasta resolverla de forma explícita.
-- Incorporar correcciones auditadas e idempotentes mediante comandos Kafka, conservando originales, revisiones y motivos. Recuperar un pendiente por comando, en secuencia original y bajo el propietario de la partición; conservar settlement único también durante recuperación.
-- Exponer diagnóstico de incompletitud separado del estado de mercado y habilitar el escenario existente `poison-recovery` con evidencia y smoke portable aislados de datos previos. Reutilizar la consola existente, sin ampliar su navegación.
-- **BREAKING**: sustituir la detención obligatoria por mensaje permanente de F-03 por cuarentena durable y avance transaccional; extender la entrada con comandos internos versionados. Las posiciones exitosas existentes permanecen inmutables.
+- Reintentar únicamente fallas transitorias con rollback conocido: hasta cinco intentos por sesión, con backoff exponencial y jitter. El contador vive en memoria; reiniciar o cambiar de propietario inicia otro ciclo acotado.
+- Guardar el ER permanente en una tabla de cuarentena y notificar su posición y causa en `execution-reports-rejected`. La notificación admite duplicados identificables; el original completo permanece en SQL.
+- Pausar la partición afectada sin confirmar el offset del ER fallido. Los sucesores esperan en Kafka y las otras particiones pueden continuar. No se crea una cola SQL ni se intenta aislar cada orden dentro de una partición.
+- Registrar una corrección con key, JSON efectivo, motivo y responsable declarado. Al reiniciar el consumidor se aplica esa corrección en la misma posición original, antes de sus sucesores. Una segunda tabla conserva las correcciones y sus resultados.
+- Reutilizar procesamiento, deduplicación, ledger y settlement existentes. La corrección se registra en SQL; el negocio sólo se aplica al consumir la posición pendiente de Kafka.
+- Ofrecer consulta y corrección por API local y habilitar el escenario existente `poison-recovery`, sin agregar pantallas ni formularios.
+
+Se eliminan del diseño anterior los comandos internos, outbox, leases, barreras por orden, captura de sucesores, rondas durables de retry, autorización de nuevas rondas y un contrato de DLQ con modalidades o hashes.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `report-quarantine`: clasificación, reintentos durables, DLQ, barreras, corrección auditada y recuperación ordenada.
+- `report-quarantine`: cuarentena, DLQ, reintentos acotados y corrección auditada con reanudación operativa.
 
 ### Modified Capabilities
 
-- `execution-report-consumption`: resolución durable de pendientes y entrada de comandos sin paralelizar particiones.
-- `processing-results`: distinguir éxito, cuarentena y recepción de comandos, preservando resultados históricos.
-- `settlement-publication`: asociar la salida recuperada al progreso del comando que la origina.
-- `order-query`: exponer incompletitud y posiciones pendientes sin inventar estados de mercado.
-- `demo-scenarios`: habilitar y verificar `poison-recovery`, incorporándolo al lote disponible.
-- `evaluation-console`: inspeccionar cuarentena, correcciones y resultados desde las vistas existentes; conservar validación de publicación ordinaria.
+- `execution-report-consumption`: pausar un error pendiente y seleccionar su corrección al reentregar la misma posición.
+- `processing-results`: relacionar el resultado de la corrección con la posición original y conservar su auditoría.
+- `settlement-publication`: comprobar que una corrección FILLED conserva la recuperación transaccional existente.
+- `demo-scenarios`: habilitar un recorrido pequeño de error, corrección y continuación ordenada.
+
+`order-query` y `evaluation-console` conservan sus contratos: no se agrega `processing` al GET de órdenes ni una interfaz de administración de cuarentena.
 
 ## Impact
 
-Cambian listener/configuración Kafka y política posterior al rollback, casos de uso y puertos de aplicación, adaptadores JDBC/Kafka/HTTP, migración aditiva desde V2, configuración de reintentos y controles de demo, pruebas y smokes. Se conserva Java 25, Spring Boot y dependencias del BOM; no se agregan servicios ni librerías de retry. README y DECISIONS se actualizarán durante implementación con evidencia observada; F-06 continúa pendiente hasta entonces. Quedan fuera cierre con descarte de pendientes, reconstrucción de éxitos históricos, cambios de particionado, auth, una UI nueva, retención productiva automática y F-07/F-08.
+Cambian el manejo de errores del listener, la selección del ER efectivo y la transacción de aplicación; se agregan dos tablas en una migración aditiva, una API local y pruebas focalizadas. No se incorporan servicios, dependencias ni un protocolo nuevo de Kafka. README y DECISIONS se actualizarán al implementar; F-06 permanece pendiente.
+
+El trade-off elegido es disponibilidad: una orden inválida también demora otras órdenes de su partición hasta que un operador la corrija y reinicie el consumidor. No hay plazo garantizado de reparación humana. La DLQ es una notificación al menos una vez; la garantía existente de settlement no se relaja. La recuperación presupone una corrección válida compatible con la identidad y partición originales.

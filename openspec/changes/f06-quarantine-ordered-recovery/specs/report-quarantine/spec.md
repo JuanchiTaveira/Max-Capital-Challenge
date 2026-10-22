@@ -2,141 +2,81 @@
 
 ## Purpose
 
-Conservar ER fallidos y sus sucesores con evidencia durable, aislar órdenes incompletas y permitir su recuperación secuencial mediante correcciones auditadas sin perder ni duplicar efectos.
+Conservar un ER inválido y permitir su corrección auditada, manteniendo pendiente su posición Kafka para recuperar la secuencia con un mecanismo pequeño y explícito.
 
 ## ADDED Requirements
 
-### Requirement: Explicit failure classification
-El sistema SHALL distinguir errores permanentes del ER, fallas transitorias conocidas, fallas de infraestructura y resultados Kafka inciertos. Una excepción desconocida SHALL conservar el pendiente y diagnóstico sin descartarlo. La clasificación SHALL considerar la etapa y el resultado transaccional, no sólo el tipo de excepción.
+### Requirement: Failure classification and bounded retry
+El sistema SHALL distinguir errores permanentes del ER, rollback transitorio conocido y fallas operativas o inciertas. Sólo el rollback transitorio conocido SHALL reintentarse automáticamente, hasta cinco intentos por sesión con backoff exponencial, jitter y espera máxima de 5 s. Las esperas SHALL ocurrir fuera de transacciones.
 
-#### Scenario: Permanent invalid input
-- **WHEN** un ER contiene JSON o campos inválidos, identidad conflictiva o transición inválida
-- **THEN** se conserva en cuarentena sin reintentos automáticos de negocio ni efectos parciales
-- **AND** se identifica posición, causa y alcance del bloqueo
+#### Scenario: Transient rollback recovers
+- **WHEN** un intento revierte por deadlock o serialización y su causa desaparece dentro del límite
+- **THEN** se reintenta la misma posición y se aplica una sola vez sin DLQ ni sucesores adelantados
+- **AND** las esperas parten de 500 ms, duplican su base y agregan entre 0 y 200 ms de jitter sin superar 5 s
 
-#### Scenario: Unknown failure or unavailable database
-- **WHEN** ocurre una falla no clasificada o no se puede persistir el diagnóstico durable
-- **THEN** no se confirma el offset ni se envía el ER a DLQ como si fuera inválido
-- **AND** se informa la intervención operativa necesaria
+#### Scenario: Attempts are exhausted or the process restarts
+- **WHEN** se agotan los intentos de la sesión
+- **THEN** se pausa la partición con diagnóstico y el offset permanece pendiente
+- **AND** resolver la causa y reiniciar habilita otro ciclo; no se promete conservar contador ni espera entre procesos o rebalanceos
 
-### Requirement: Durable bounded exponential retries
-Las fallas transitorias reintentables SHALL usar backoff exponencial con jitter y límites configurables de reintentos, intervalo y tiempo total. El presupuesto y próximo intento SHALL sobrevivir a reinicios y rebalanceos por posición. Las esperas SHALL ocurrir sin transacción SQL ni Kafka abierta. No SHALL aplicarse un sucesor durante esa espera.
+#### Scenario: Infrastructure or uncertain commit
+- **WHEN** SQL no está disponible, la excepción es desconocida o Kafka deja un commit incierto
+- **THEN** no se clasifica el ER como inválido ni se lo descarta o confirma
+- **AND** se conserva la detención operativa de F-05 para incertidumbre y no se reenvía desde progreso local incierto
 
-#### Scenario: Transient failure recovers within budget
-- **WHEN** un intento revierte por una falla transitoria conocida y luego desaparece su causa
-- **THEN** se reintenta la misma posición respetando sus esperas y se aplica una sola vez
-- **AND** no aparece rechazo permanente ni aplicación anticipada de sus sucesores
+### Requirement: Quarantine without skipping input
+Un permanente SHALL conservarse una sola vez en SQL por posición, con key y valor originales, causa y fecha. SHALL pausarse su partición sin confirmar esa posición ni aplicar sucesores. La cuarentena SHALL ser consultable sin crear una orden o resultado exitoso ficticio.
 
-#### Scenario: Restart during backoff
-- **WHEN** una instancia cae después de reservar un reintento o mientras espera y otra toma la partición
-- **THEN** conserva el presupuesto consumido y no adelanta el próximo instante permitido
-- **AND** los reinicios repetidos no regeneran intentos ilimitados
+#### Scenario: Invalid partial followed by completion
+- **WHEN** un parcial inválido sigue a NEW y precede a FILLED
+- **THEN** quedan visibles el original y su causa, la orden conserva NEW y el FILLED espera en Kafka sin ledger
+- **AND** tampoco avanzan otras órdenes de esa partición; otras particiones pueden continuar
 
-#### Scenario: Budget exhausted or confirmation uncertain
-- **WHEN** se agota un presupuesto transitorio o el commit Kafka queda incierto
-- **THEN** se conserva el pendiente y se detiene la sesión con diagnóstico operativo, sin convertirlo automáticamente en error permanente
-- **AND** reanudar no renueva el presupuesto agotado; una nueva ronda exige una acción auditada explícita
+#### Scenario: Partition is reassigned
+- **WHEN** otro consumidor recibe la partición antes de registrar una corrección
+- **THEN** encuentra la misma cuarentena y pausa esa partición sin volver a aplicar el original
+- **AND** no confirma el offset para liberar artificialmente el bloqueo
 
-### Requirement: Immutable quarantine evidence
-La cuarentena SHALL conservar por posición el valor y key originales en bytes, nulidad, headers, diagnóstico, clasificación, intentos y fechas. SHALL distinguir identidad confiable de identidad declarada y conservar sus revisiones. Los bytes originales y resultados exitosos previos SHALL ser inmutables; cuarentena SHALL ser distinta de APPLIED y DUPLICATE.
+### Requirement: At least once dead letter notification
+Después de conservar la cuarentena, el sistema SHALL publicar un aviso en `execution-reports-rejected` con schemaVersion, rejectionId estable, source y causa. El aviso SHALL omitir el payload completo, disponible en SQL. No SHALL confirmar el offset inválido. La publicación SHALL admitir duplicados identificables ante fallas entre Kafka y el marcador SQL de notificación.
 
-#### Scenario: Non JSON or null value
-- **WHEN** se recibe un valor ilegible, no UTF-8 o nulo
-- **THEN** el original puede reconstruirse exactamente desde la evidencia, incluso si no existe un JSON válido
-- **AND** no se crea una orden ficticia ni una fila de ledger o resultado exitoso
+#### Scenario: Notification fails or its confirmation is lost
+- **WHEN** falla publicar o no se sabe si confirmó la notificación
+- **THEN** el original y su offset siguen pendientes y se intenta completar el aviso al reanudar
+- **AND** puede repetirse rejectionId sin que eso represente otra aplicación o settlement
 
-#### Scenario: Redelivery after quarantine SQL commit
-- **WHEN** se reentrega una posición cuya cuarentena fue confirmada antes de fallar Kafka
-- **THEN** se recuperan el mismo rechazo y bloqueo sin agregar otra cuarentena ni reiniciar intentos
+#### Scenario: Inspect the original
+- **WHEN** se consulta la posición indicada por la DLQ
+- **THEN** se obtiene el original SQL aunque no sea JSON válido o no exista una orden aplicada
+- **AND** no se necesitan modalidades de evidencia ni hashes en el contrato DLQ
 
-### Requirement: Transactional dead letter publication
-Cada rechazo permanente SHALL publicar una única notificación confirmada en `execution-reports-rejected`, junto al offset de la entrega que lo resuelve en la misma transacción Kafka. La evidencia y bloqueo SHALL estar confirmados antes. Si publicar falla, SHALL conservarse el pendiente; un commit incierto SHALL resolverse desde progreso estable.
+### Requirement: Audited correction acceptance
+La API local SHALL aceptar requestId, source, key y ER efectivos, motivo y responsable declarado. SHALL conservar el original y cada corrección, permitir una sola ACCEPTED por posición y rechazar cambios de identidad confiable, routing incompatible o éxitos previos. Aceptar SHALL guardar metadata sin aplicar negocio ni reanudar consumo.
 
-#### Scenario: Rejection transaction aborts
-- **WHEN** Kafka aborta después de aceptar el envío del rechazo
-- **THEN** read_committed no observa ese intento ni avanza el offset estable
-- **AND** al recuperar se observa un único rechazo confirmado y permanece el original SQL intacto
+#### Scenario: Repeat or conflict
+- **WHEN** se repite requestId con el mismo contenido
+- **THEN** se devuelve la misma corrección sin agregar auditoría ni efectos
+- **AND** reutilizarlo con otro contenido o intentar otra corrección mientras existe una ACCEPTED devuelve conflicto
 
-#### Scenario: Rejection commit response lost
-- **WHEN** Kafka confirma rechazo y progreso pero la aplicación pierde la respuesta
-- **THEN** reiniciar desde progreso estable no publica otra notificación del mismo rechazo
+#### Scenario: Unknown identity or applied position
+- **WHEN** no hay key confiable o se intenta corregir una posición ya exitosa
+- **THEN** una identidad desconocida requiere key explícita compatible con la partición original y una posición exitosa se rechaza
+- **AND** una key original canónica conserva su numericOrderId; no se mueve trabajo entre particiones
 
-#### Scenario: Deferred report fails during recovery
-- **WHEN** un sucesor retenido se intenta por primera vez durante recuperación y resulta permanentemente inválido
-- **THEN** su rechazo se confirma junto al offset del comando que hizo ese intento
-- **AND** el rechazo conserva como fuente la posición original del sucesor y el bloqueo continúa
+### Requirement: Ordered recovery from the original position
+Después de registrar una corrección y reiniciar el consumidor, éste SHALL usar el ER efectivo en la misma posición original. La resolución de cuarentena/corrección SHALL compartir el commit SQL de negocio. Los sucesores SHALL continuar por el consumo ordinario sólo después de resolver ese offset.
 
-### Requirement: Versioned rejection contract
-El rechazo SHALL ser JSON UTF-8 con schemaVersion 1, rejectionId estable por posición original, source con topic/partition/offset, key y valor originales codificados en base64 con nulidad explícita, headers, clasificación, código de causa e identidad confiable opcional. IDs y offsets SHALL preservar exactitud decimal; el diagnóstico SHALL excluir credenciales y trazas sin filtrar.
+#### Scenario: Correction completes the sequence
+- **WHEN** se corrige el parcial pendiente y se reinicia el consumidor
+- **THEN** se aplica el parcial efectivo antes del FILLED y el ledger conserva esa secuencia
+- **AND** no se usa un comando de recuperación, una republicación al final del topic ni una cola SQL de sucesores
 
-#### Scenario: Inspect rejection with invalid bytes
-- **WHEN** se lee una notificación con read_committed
-- **THEN** permite correlacionar la cuarentena y reconstruir key, valor y headers originales sin pérdida
-- **AND** cambiar de instancia no cambia rejectionId ni fuente
+#### Scenario: Correction fails or SQL rolls back
+- **WHEN** la corrección viola reglas de negocio o falla su transacción SQL
+- **THEN** no quedan efectos parciales y el offset sigue pendiente
+- **AND** una corrección permanentemente inválida queda REJECTED y habilita otra, conservando todo el historial
 
-### Requirement: Durable sequence barriers
-Una orden con un ER sin resolver SHALL retener sus sucesores sin aplicarlos ni emitir settlement, conservando su secuencia original. Otras órdenes identificables SHALL continuar mediante consumo secuencial. Ante identidad desconocida o key/payload contradictorios SHALL retenerse conservadoramente la partición, sin inferir una asociación de orden.
-
-#### Scenario: Healthy order shares partition
-- **WHEN** A tiene un ER inválido y luego llegan ER de A y B en su misma partición, con identidades confiables
-- **THEN** los sucesores de A quedan retenidos y B puede completar normalmente
-- **AND** avanzar sus offsets sólo significa captura durable para los retenidos, no aplicación exitosa
-
-#### Scenario: Missing key or contradictory identifiers
-- **WHEN** el ER no tiene una key canónica confiable o su identidad contradice la key
-- **THEN** no se aplican nuevos ER ordinarios de esa partición hasta una resolución auditada
-- **AND** se capturan durablemente mientras las demás particiones continúan y los comandos de resolución siguen siendo atendibles
-
-### Requirement: Audited correction commands
-Una corrección SHALL identificar solicitud idempotente, posición original, revisión esperada, motivo, responsable declarado y ER efectivo. SHALL conservar original y revisiones y ejecutarse mediante Kafka. No SHALL cambiar una orden confiablemente identificada ni sobrescribir éxitos previos. Una asociación inicialmente ambigua SHALL exigir identidad explícita compatible con la partición original.
-
-#### Scenario: Valid correction of earliest unresolved report
-- **WHEN** se procesa una corrección válida para el primer pendiente del alcance bloqueado
-- **THEN** se conserva el vínculo entre original, revisión, comando y resultado aplicado o duplicado
-- **AND** el contador y ledger sólo cambian si el ER efectivo es nuevo y válido
-
-#### Scenario: Stale conflicting or out of sequence correction
-- **WHEN** la revisión es obsoleta, la solicitud se reutiliza con otro contenido, se intenta corregir un éxito o resolver un pendiente posterior
-- **THEN** se registra o devuelve un rechazo explícito sin modificar el original, la revisión vigente ni la orden
-- **AND** una corrección inválida no libera el bloqueo ni borra sus sucesores
-
-#### Scenario: Repeated equivalent correction
-- **WHEN** se repite la misma solicitud en otra posición Kafka o desde la otra instancia
-- **THEN** se devuelve su resolución previa sin otra aplicación, revisión ni salida settlement
-
-### Requirement: Ordered recovery under partition ownership
-La recuperación SHALL usar comandos en la partición original y aplicar como máximo un ER retenido por comando bajo su propietario vigente. SHALL elegir el menor offset pendiente del alcance y conservar la barrera hasta agotar sus pendientes. El avance y las salidas SHALL ser recuperables ante caída, aborto o rebalanceo sin depender de la consola viva.
-
-#### Scenario: Correct partial then recover FILLED
-- **WHEN** se corrige un parcial inválido seguido por un FILLED retenido
-- **THEN** primero se aplica el parcial efectivo y después el FILLED original
-- **AND** el ledger refleja esa secuencia, con una aplicación por ER y un único settlement confirmado
-
-#### Scenario: New reports arrive during recovery
-- **WHEN** llegan ER nuevos para el alcance aún bloqueado mientras se recuperan sus pendientes
-- **THEN** se incorporan al final de sus pendientes y no adelantan a los ya retenidos
-- **AND** el bloqueo sólo se libera al resolver todos los pendientes del alcance
-
-#### Scenario: Crash with recovery work remaining
-- **WHEN** ambas instancias o la consola reinician después de aceptar una corrección o de aplicar un pendiente
-- **THEN** las solicitudes aceptadas y el trabajo restante se retoman durablemente
-- **AND** un comando duplicado o un propietario obsoleto no repite efectos ni salidas
-
-### Requirement: Durable recovery visibility
-La consulta de cuarentena SHALL exponer original, alcance del bloqueo, pendientes, intentos, revisión, motivo, responsable declarado, posiciones de comandos y resoluciones. SHALL distinguir captura durable, aplicación SQL y confirmación Kafka. Aceptar una solicitud SHALL ser distinto de aplicarla; el responsable declarado SHALL presentarse sin garantía de autenticación.
-
-#### Scenario: Order missing NEW
-- **WHEN** el primer ER de una orden está en cuarentena y todavía no existe una orden aplicada
-- **THEN** se puede consultar su diagnóstico por posición o identidad confiable sin inventar un estado NEW ni modificar el 404 de consulta de orden
-
-#### Scenario: Accepted request loses HTTP response
-- **WHEN** una solicitud fue aceptada durablemente pero el cliente no recibe respuesta
-- **THEN** repetir su identificador recupera la misma solicitud y permite observar si quedó pendiente o resuelta
-
-### Requirement: Preservation across activation
-La activación SHALL conservar órdenes, ledger, resultados y offsets previos. Una posición inválida pendiente de F-05 SHALL poder entrar a cuarentena al reanudarse. No SHALL crear rechazos retroactivos para posiciones ya confirmadas ni borrar pendientes por limpieza de demo o cambio de instancia.
-
-#### Scenario: Upgrade with existing success and poison record
-- **WHEN** ambas instancias actualizadas retoman el mismo grupo sobre datos V2 con éxitos y un ER inválido pendiente
-- **THEN** los éxitos permanecen iguales y el inválido obtiene su primera cuarentena y rechazo confirmado
-- **AND** no se resetean offsets ni se recrean topics o volúmenes
+#### Scenario: Console or application restarts
+- **WHEN** se reinicia la consola o ambas aplicaciones con una corrección aceptada
+- **THEN** SQL conserva esa corrección y Kafka conserva el offset para reentregarlo al propietario vigente
+- **AND** no se depende de un worker, outbox o historial del runner para aplicar negocio
