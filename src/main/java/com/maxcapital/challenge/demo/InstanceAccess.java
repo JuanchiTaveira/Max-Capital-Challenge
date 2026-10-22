@@ -51,4 +51,33 @@ public class InstanceAccess {
     }
     return result;
   }
+
+  public tools.jackson.databind.JsonNode recovery(String instance, String operation, Object body) {
+    String base = addresses.get(instance);
+    if (base == null || !java.util.Set.of("", "arm", "control").contains(operation))
+      throw new IllegalArgumentException("Control de recuperación inválido");
+    try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()) {
+      var request =
+          HttpRequest.newBuilder(
+                  URI.create(
+                      base
+                          + "/internal/demo/recovery"
+                          + (operation.isEmpty() ? "" : "/" + operation)))
+              .timeout(Duration.ofSeconds(3));
+      if (body != null)
+        request
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(ConsoleValues.JSON.writeValueAsString(body)));
+      var response = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() != 200)
+        throw new IllegalStateException(
+            "Control de recuperación rechazado: " + instance + " HTTP " + response.statusCode());
+      return ConsoleValues.JSON.readTree(response.body());
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Control interrumpido", ex);
+    } catch (Exception ex) {
+      throw new IllegalStateException("Control de recuperación no disponible: " + instance, ex);
+    }
+  }
 }

@@ -29,6 +29,7 @@ public final class RecoveryBarrier {
   private String reachedAt;
   private String failure;
   private InputPosition position;
+  private InputPosition eligiblePosition;
   private long deadline;
   private boolean rollback;
   private boolean waiting;
@@ -53,6 +54,7 @@ public final class RecoveryBarrier {
     deadline = System.nanoTime() + java.time.Duration.ofMillis(request.ttlMillis()).toNanos();
     state = "ARMED";
     position = null;
+    eligiblePosition = null;
     reachedAt = null;
     failure = null;
     rollback = false;
@@ -77,7 +79,8 @@ public final class RecoveryBarrier {
         || !state.equals("ARMED")
         || arm.boundary() != boundary
         || arm.numericOrderId() != order
-        || arm.fixId() != fix) return;
+        || arm.fixId() != fix
+        || !input.equals(eligiblePosition)) return;
     position = input;
     reachedAt = Instant.now().toString();
     state = "REACHED";
@@ -98,6 +101,14 @@ public final class RecoveryBarrier {
     waiting = false;
     if (rollback || state.equals("EXPIRED"))
       throw new IllegalStateException("Barrera " + state + "; ER pendiente: " + input);
+  }
+
+  public synchronized void identify(InputPosition input, String runId, long order, long fix) {
+    if (arm != null
+        && state.equals("ARMED")
+        && arm.runId().equals(runId)
+        && arm.numericOrderId() == order
+        && arm.fixId() == fix) eligiblePosition = input;
   }
 
   public synchronized void failed(InputPosition input, Exception exception) {

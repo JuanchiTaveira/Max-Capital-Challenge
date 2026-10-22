@@ -88,6 +88,12 @@ services:
       <<: *application-environment
       INSTANCE_ID: app-1
       APP_DEMO_OBSERVATION_ENABLED: "true"
+      APP_DEMO_RECOVERY_ENABLED: "true"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_MAX_POLL_INTERVAL_MS: "10000"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_SESSION_TIMEOUT_MS: "6000"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_HEARTBEAT_INTERVAL_MS: "1000"
+      SPRING_KAFKA_PRODUCER_PROPERTIES_TRANSACTION_TIMEOUT_MS: "60000"
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-orders}?connectTimeout=3&socketTimeout=30&tcpKeepAlive=true
       SPRING_KAFKA_CONSUMER_CLIENT_ID: app-1
     ports:
       - "127.0.0.1:8081:8080"
@@ -98,6 +104,12 @@ services:
       <<: *application-environment
       INSTANCE_ID: app-2
       APP_DEMO_OBSERVATION_ENABLED: "true"
+      APP_DEMO_RECOVERY_ENABLED: "true"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_MAX_POLL_INTERVAL_MS: "10000"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_SESSION_TIMEOUT_MS: "6000"
+      SPRING_KAFKA_CONSUMER_PROPERTIES_HEARTBEAT_INTERVAL_MS: "1000"
+      SPRING_KAFKA_PRODUCER_PROPERTIES_TRANSACTION_TIMEOUT_MS: "60000"
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-orders}?connectTimeout=3&socketTimeout=30&tcpKeepAlive=true
       SPRING_KAFKA_CONSUMER_CLIENT_ID: app-2
     ports:
       - "127.0.0.1:8082:8080"
@@ -172,6 +184,23 @@ services:
         target: /var/run/docker.sock
         bind:
           create_host_path: false
+
+  verify-f05:
+    profiles: ["tools"]
+    image: max-capital-challenge-smoke:0.1.0-SNAPSHOT
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.smoke
+    entrypoint: ["python", "-u", "/smoke/verify-f05.py"]
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      app-1:
+        condition: service_healthy
+      app-2:
+        condition: service_healthy
+      evaluation-console:
+        condition: service_healthy
 
   verify-console:
     profiles: ["tools"]

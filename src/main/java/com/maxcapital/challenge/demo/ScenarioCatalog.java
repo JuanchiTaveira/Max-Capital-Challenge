@@ -87,7 +87,7 @@ public class ScenarioCatalog {
         new Entry(
             "settlement-once",
             "Settlement único",
-            false,
+            true,
             "F-04/F-05",
             "Comprobar salida exactamente una vez ante reentregas y fallas",
             List.of("Publicación y fronteras de recuperación implementadas"),
@@ -95,7 +95,7 @@ public class ScenarioCatalog {
         new Entry(
             "commit-boundary-recovery",
             "Caídas entre commits y rebalanceos",
-            false,
+            true,
             "F-05",
             "Ubicar una caída durante escritura o entre confirmaciones",
             List.of("Instrumentación determinista y evidencia de F-05"),

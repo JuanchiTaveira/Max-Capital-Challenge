@@ -111,22 +111,23 @@ class RecoveryKafkaIT {
   @Test
   void killsOpenSqlDuringNewAndUpdateAndRecoversTheEntireSequence() throws Exception {
     try (var h = new Harness(dir)) {
-      for (int index = 0; index < 2; index++) {
+      for (int index = 0; index < 3; index++) {
         var a = h.start("a" + index, true, true);
         var b = h.start("b" + index, false, true);
         h.twoMembers();
         int partition = 1 - h.partition(b);
         long order = 20201 + index;
         int target = index == 0 ? 1 : 2;
+        boolean terminalTarget = index == 2;
         if (target == 2) h.committed(h.send(order, 1, "NEW", 0, 10, partition));
         h.arm(a, order, target, "BEFORE_SQL_COMMIT", 45000);
         var pending =
             h.send(
                 order,
                 target,
-                target == 1 ? "NEW" : "PARTIALLY_FILLED",
-                target == 1 ? 0 : 4,
-                target == 1 ? 10 : 6,
+                terminalTarget ? "FILLED" : target == 1 ? "NEW" : "PARTIALLY_FILLED",
+                terminalTarget ? 10 : target == 1 ? 0 : 4,
+                terminalTarget ? 0 : target == 1 ? 10 : 6,
                 partition);
         h.reached(a);
         assertThat(h.results(order)).hasSize(target - 1);
@@ -137,12 +138,16 @@ class RecoveryKafkaIT {
                       Integer.class,
                       order))
               .isZero();
-        var terminal = h.send(order, target + 1, "FILLED", 10, 0, partition);
+        var terminal =
+            terminalTarget
+                ? h.send(20299, 1, "NEW", 0, 10, partition)
+                : h.send(order, target + 1, "FILLED", 10, 0, partition);
         h.kill(a);
         h.committed(terminal);
-        h.check(order, target == 1 ? new int[] {1, 2} : new int[] {1, 2, 3});
+        h.check(order, target == 1 || terminalTarget ? new int[] {1, 2} : new int[] {1, 2, 3});
         assertThat(h.output(order)).hasSize(1);
-        assertThat(h.results(order)).hasSize(target + 1);
+        assertThat(h.results(order)).hasSize(terminalTarget ? target : target + 1);
+        if (terminalTarget) assertThat(h.results(20299)).hasSize(1);
         a.close();
         b.close();
       }
@@ -469,6 +474,7 @@ class RecoveryKafkaIT {
                   partition,
                   Long.toString(order),
                   TestInfrastructure.report(order, fix, status, amount, leaves)
+                      .replaceFirst("}\\s*$", ",\"scenarioRun\":\"" + group + "\"}")
                       .getBytes(StandardCharsets.UTF_8)))
           .get(15, TimeUnit.SECONDS);
     }

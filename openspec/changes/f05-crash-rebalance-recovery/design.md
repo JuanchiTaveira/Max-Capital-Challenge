@@ -116,6 +116,11 @@ de escenarios y su control de origen/exclusión. Las barreras no habilitan scrip
 SQL, payloads ni destinos arbitrarios. Esto es control local de demo, no una capa
 de autenticación de producto.
 
+El armado rechaza una identidad que ya tenga ledger. Al consumir se comprueba
+además el campo `scenarioRun` del ER contra la ejecución armada antes de habilitar
+la posición objetivo: coincidir sólo en numericOrderId/fixId no basta para suspender
+un registro de otra ejecución.
+
 Estados: ARMED, REACHED, RELEASED, EXPIRED y CANCELLED; ausencia tras restart se
 informa como intento anterior no disponible, nunca como barrera alcanzada. El
 estado guarda posición, frontera y marcas de tiempo. Una barrera vencida aborta
@@ -168,6 +173,8 @@ vacía, un log o un límite tomado antes de resolver la transacción anterior.
 Durante una caída se consulta SQL, Kafka, el grupo y la instancia sobreviviente;
 comparar HTTP entre ambas se reserva para cuando vuelven. Capturar resultados antes
 y después permite distinguir recuperación de APPLIED de republicación DUPLICATE.
+Las observaciones parciales se guardan al alcanzar la barrera y durante recuperación,
+antes de comprobar el caso completo; cancelación o falla las conserva como incompletas.
 En reasignación se registra el rechazo Kafka del intento anterior desde diagnóstico
 atribuido al caso y se espera su finalización antes de contar salidas definitivas.
 

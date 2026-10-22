@@ -15,9 +15,9 @@ Ejecutar los comandos desde la raíz del repositorio, con Docker activo:
 
 1. [Levantar el entorno](#ejecutar): `docker compose up --build`.
 2. Abrir [la consola de evaluación](http://localhost:8083). Empieza por **Dos órdenes en paralelo**: leer **Qué demuestra**, **Qué vamos a hacer** y **Qué debería pasar**; elegir **Automático** y pulsar **Ejecutar escenario**.
-3. Leer la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**, sin abrir JSON. **Ir al siguiente escenario** sólo lo selecciona; no publica nada. **Ejecutar todos** recorre los cinco y permite consultar cada resultado por separado. Los tres pendientes quedan aparte.
+3. Leer la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**, sin abrir JSON. **Ir al siguiente escenario** sólo lo selecciona; no publica nada. **Ejecutar todos** recorre los siete y permite consultar cada resultado por separado. Cuarentena queda pendiente de F-06.
 4. En modo **Paso a paso**, leer qué hará **Continuar paso** antes de pulsarlo; recargar conserva la ejecución y el escenario seleccionado por URL mientras la consola siga ejecutándose. **Evidencia técnica** contiene posiciones, snapshots y enlaces para inspeccionar órdenes, ledger y mensajes. En **Mensajes**, el editor permite publicar un NEW y luego un FILLED para la misma key, o republicar exactamente un registro.
-5. En **Sistema**, observar salud, consumo, asignaciones y offsets; detener/iniciar o terminar abruptamente una aplicación desde sus controles. Los escenarios guiados de caídas entre commits, settlement y mensajes permanentes siguen pendientes; F-04 tiene su verificación propia por suite y smoke.
+5. Ejecutar **Settlement único** y **Caídas entre commits y rebalanceos** para observar fallas posicionadas con barreras y su recuperación. En **Sistema**, observar salud, consumo, asignaciones y offsets. El kill manual sirve para explorar; por sí solo no ubica una frontera. Mensajes permanentes y cuarentena siguen pendientes de F-06.
 
 El evaluador sólo necesita Docker y un navegador. La verificación portable por API
 se ejecuta con `docker compose --profile tools run --build --rm verify-console`:
@@ -39,11 +39,52 @@ Esta tabla es la única fuente del estado de implementación.
 | F-02 | Procesamiento y consulta de órdenes | Implementado |
 | F-03 | Idempotencia y resultados persistidos | Implementado |
 | F-04 | Settlement transaccional | Implementado |
-| F-05 | Recuperación ante caídas y rebalanceos | Pendiente |
+| F-05 | Recuperación ante caídas y rebalanceos | Implementado |
 | F-06 | Cuarentena y recuperación ordenada | Pendiente |
 | F-07 | Entrega reproducible y documentación | Pendiente |
 | F-08 | Integración continua — opcional | Pendiente |
 | F-09 | Consola local de evaluación | Implementado |
+
+### Ensayos de recuperación de F-05
+
+Se verifican caídas con SQL abierto, después del commit SQL y después del envío
+aceptado antes del commit Kafka, reasignación con SQL abierto y caída de ambas apps.
+Compose activa explícitamente `APP_DEMO_RECOVERY_ENABLED=true` en las dos apps.
+Fuera de la demo los controles están deshabilitados por defecto. Las barreras
+temporales seleccionan una ejecución y un ER, con token de intento y generación
+de proceso: `BEFORE_SQL_COMMIT`, `AFTER_SQL_COMMIT` y
+`AFTER_SEND_ACK_BEFORE_KAFKA_COMMIT`. Cada barrera vence como máximo en 45 segundos;
+vencer deja el ER pendiente y nunca se interpreta como procesamiento exitoso.
+
+En la demo `max.poll.interval.ms` vale 10000, sesión 6000, heartbeat 1000 y timeout
+de transacción Kafka 60000 ms; JDBC usa `socketTimeout=30` segundos para permitir
+la espera del nuevo propietario mientras se libera SQL. Los pasos tienen presupuesto
+de 150 segundos. Estos ajustes no cambian la configuración ordinaria de la aplicación.
+Cada ventana crítica se completa dentro de un paso: el modo manual no deja una
+transacción abierta mientras espera que el evaluador pulse Continuar.
+
+La limpieza invalida barreras, inicia procesos terminados y reinicia aplicaciones
+con listener detenido antes de verificar dos consumidores. Conserva datos y evidencia;
+si falla, la ejecución informa qué falta restaurar. Una cancelación no borra los ER
+ya publicados: al recuperar el consumo pueden completarse sus efectos pendientes.
+Si se pierde el proceso de consola, las barreras vencen pero su historial en memoria
+no se recupera. Para restablecer consumo después de resolver la causa:
+
+```sh
+docker compose restart app-1 app-2
+```
+
+El smoke nuevo ejecuta los dos recorridos F-05 con controles Docker reales:
+
+```sh
+docker compose --profile tools run --build --rm verify-f05
+```
+
+Ejecutar smokes de a uno y conservar base, grupo, topics, particiones y volúmenes.
+El catálogo ofrece siete escenarios ejecutables, incluidos Settlement único y
+Caídas entre commits y rebalanceos, en modo automático y paso a paso. Sólo
+cuarentena sigue pendiente de F-06. Las estrategias y sus límites se explican
+en DECISIONS.md; la evidencia completa se referencia al final de este README.
 
 ## Settlement transaccional de F-04
 
@@ -94,9 +135,9 @@ particiones y retención. No resetear offsets ni borrar volúmenes. Volver a F-0
 puede confirmar pendientes sin settlement: ante un despliegue fallido detener ambas
 instancias y conservar el estado para corregir hacia adelante.
 
-La vista Mensajes de la consola ya inspecciona settlements como read_committed.
-El escenario guiado de settlement sigue pendiente de implementación; la disponibilidad
-del núcleo no lo habilita automáticamente.
+La vista Mensajes inspecciona settlements como read_committed. El escenario guiado
+Settlement único verifica duplicados y recuperación después de SQL con la misma
+lectura; su evidencia se conserva por ejecución y se complementa con el smoke F-05.
 
 ### Verificación portable de settlement
 
@@ -231,11 +272,11 @@ El lag cuenta posiciones Kafka, que también pueden incluir registros de control
 transaccional: no equivale necesariamente a cantidad de ER pendientes.
 
 El catálogo ofrece órdenes intercaladas, snapshots con reloj no creciente,
-duplicados terminales/tardíos, persistencia después de reiniciar y visibilidad de
-transacciones confirmadas/abortadas. Cada escenario informa precondiciones,
-resultado esperado y verificaciones reales; **Ejecutar todos** recorre sólo
-esos cinco y deja explícitos los escenarios pendientes de F-04/F-05/F-06. La consola no emite
-poison intencional ni certifica settlement o caídas entre commits.
+duplicados terminales/tardíos, persistencia después de reiniciar, visibilidad de
+transacciones confirmadas/abortadas, settlement único y caídas entre commits y
+rebalanceos. Cada escenario informa precondiciones, resultado esperado y verificaciones
+reales; **Ejecutar todos** recorre los siete. Mensajes inválidos y recuperación
+ordenada siguen pendientes de F-06; la consola no publica poison intencional.
 
 Sólo se admite una ejecución activa. El modo paso a paso permite inspeccionar
 cada etapa y continuar, incluso tras recargar la página por su URL. Los pasos de
@@ -405,8 +446,8 @@ instancia sin confirmar el ER fallido ni saltar al siguiente. Si esa instancia
 tenía ambas particiones, ambas se detienen. Tras resolver una falla transitoria,
 reiniciar la aplicación retoma desde el offset pendiente. Un ER inválido vuelve
 a fallar al reiniciar: F-06 incorporará cuarentena y recuperación ordenada.
-F-03 incorpora resultados por posición; F-05 cubrirá más fronteras de caída y
-rebalanceo. F-04 incorpora la coordinación transaccional del settlement.
+F-03 incorpora resultados por posición; los ensayos de F-05 agregan fronteras de
+caída y rebalanceo. F-04 aporta la coordinación transaccional del settlement.
 
 ### Resultados persistidos de F-03
 
@@ -585,7 +626,7 @@ powershell -NoProfile -File scripts/verify-f02.ps1 -SkipBuild
 
 **Límite actual:** el smoke reinicia ambas instancias después de consumir el lote.
 No verifica una caída de una sola instancia durante el procesamiento ni las fronteras
-de commit SQL/Kafka; esos escenarios siguen pendientes en F-05. La portabilidad de
+de commit SQL/Kafka; esas fronteras tienen su runner específico verify-f05. La portabilidad de
 este smoke tampoco completa por sí sola la entrega reproducible de F-07.
 
 ### Comandos de verificación
@@ -598,6 +639,9 @@ En PowerShell:
 .\mvnw.cmd verify
 pwsh -File scripts/verify-f01.ps1
 docker compose --profile tools run --build --rm verify-f02
+docker compose --profile tools run --build --rm verify-f04
+docker compose --profile tools run --build --rm verify-f05
+docker compose --profile tools run --build --rm verify-console
 ```
 
 En Linux/macOS, reemplazar `.\mvnw.cmd` por `./mvnw`. El smoke F-02 usa el mismo
@@ -671,5 +715,14 @@ settlement con dos miembros reales, rollback SQL, aborto de salida, respuesta de
 commit perdida, offsets pendientes, kill de una JVM tras SQL y reasignación real.
 El smoke portable verificó FILLED=1, CANCELLED=0 y republicaciones sin otra salida.
 SQL y Kafka tienen commits independientes; read_committed observa una única salida
-confirmada por orden cubierta, bajo los supuestos documentados. F-05 y F-06 siguen
-pendientes.
+confirmada por orden cubierta, bajo los supuestos documentados.
+
+[Evidencia de F-05](openspec/changes/archive/2026-10-22-f05-crash-rebalance-recovery/verification.md):
+18 unitarias y 50 integraciones en la suite completa, cero fallas, errores u omisiones.
+Incluye kills con NEW/PARTIAL/FILLED antes del commit SQL, reasignación durante SQL
+con commit y rollback del propietario anterior, kill tras envío aceptado y caída de
+ambas JVM. Los cuatro smokes verify-f02, verify-f04, verify-f05 y verify-console
+aprobaron secuencialmente; el lote real ejecutó siete escenarios y conservó 113
+órdenes previas. También se verificaron ambos recorridos paso a paso en navegador,
+recarga, cancelación y restauración. F-06 conserva pendientes cuarentena y
+recuperación de errores permanentes.

@@ -135,16 +135,19 @@ sólo el prefijo aplicado, sin indicador persistente de incompletitud.
 Las pruebas actuales verifican rollback, duplicados, resultados inmutables y replay
 tras fallas SQL o una falla controlada de confirmación Kafka posterior al commit SQL.
 El smoke verifica persistencia y republicación después de reinicios. SettlementKafkaIT agrega una caída real de proceso tras SQL y una reasignación
-controlada; F-05 conserva pendientes las ampliaciones de recuperación operativa.
+controlada. RecoveryKafkaIT amplía la evidencia a SQL abierto y terminación de ambas
+aplicaciones; los recorridos de consola verifican esas fronteras con controles reales.
 
 ## 7. Settlement: protocolo transaccional
 
 ### Recuperación ampliada en F-05: evidencia del núcleo
 
 `RecoveryKafkaIT` ejercita el camino real de la aplicación con PostgreSQL y Kafka,
-incluyendo procesos JVM terminados abruptamente. Su primera ejecución dirigida
-completó cuatro casos sin fallas ni omisiones; el cierre global y los recorridos
-de consola todavía deben verificar la ampliación completa.
+incluyendo procesos JVM terminados abruptamente. Sus cuatro pruebas cubren creación,
+actualización y terminal con SQL abierto, reasignación con commit/rollback del
+propietario anterior, envío aceptado y caída de ambas aplicaciones. Los recorridos
+Compose prueban además los dos escenarios guiados con controles Docker reales;
+la evidencia por ejecución se conserva en OpenSpec.
 
 | Frontera | Estrategia y observación exigida |
 | --- | --- |
@@ -172,6 +175,14 @@ intentos, verificar rechazo del anterior y aplicar sucesores. Para evaluar unici
 no basta una página vacía: se recorren ambas particiones read_committed después de
 resolver transacciones abiertas. El ID estable sirve para correlación; no suprime
 publicaciones duplicadas por sí solo.
+
+La observación administrativa del grupo exige offsets estables (`requireStable`);
+no usa un avance transaccional todavía incierto para concluir recuperación. Una
+observación parcial se conserva como incompleta, incluso al cancelar, y no aprueba
+la verificación. Si no se alcanzó la barrera no se termina el proceso. La limpieza
+mantiene la exclusión hasta verificar dos consumidores; si no puede invalidar un
+control reinicia su aplicación. Una restauración fallida impide PASSED, incluso
+cuando las verificaciones anteriores ya habían terminado.
 
 Los tests de consola con Docker sustituido sólo demuestran coordinación. La evidencia
 de procesos y los smokes Compose se registran separadamente en OpenSpec; no se
@@ -291,8 +302,8 @@ la adopción de acumulados y la deduplicación antes de validar terminales.
 
 Como lectura complementaria,
 [DemoScenariosIT](src/test/java/com/maxcapital/challenge/DemoScenariosIT.java), en
-`executesAvailableWithRealKafkaSqlAndTwoInstancesAndKeepsPendingExcluded`, ejecuta
-los cinco escenarios disponibles con dos aplicaciones, Kafka y PostgreSQL reales.
+`executesLegacyScenariosWithRealKafkaSqlAndKeepsPoisonExcluded`, selecciona
+los cinco escenarios originales con dos aplicaciones, Kafka y PostgreSQL reales.
 Los controles Docker están sustituidos: ese test comprueba la coordinación del
 reinicio, sin reiniciar procesos reales.
 [EvaluationConsoleRuntimeIT](src/test/java/com/maxcapital/challenge/EvaluationConsoleRuntimeIT.java),
@@ -320,8 +331,9 @@ fallar. No prueban una solución al bloqueo indefinido.
 Las pruebas de F-02/F-03 anteriores no demuestran por sí solas unicidad de settlement.
 La evidencia adicional de SettlementKafkaIT se describe en la sección 7 y en el
 verification.md de F-04: incluye una JVM terminada tras SQL y reasignación real,
-además de abortos y commits de respuesta incierta. F-05 conserva ampliaciones de
-recuperación y F-06 cuarentena; el estado de cada feature sigue en README.
+además de abortos y commits de respuesta incierta. RecoveryKafkaIT y el smoke F-05
+amplían recuperación durante SQL y en ambas aplicaciones; F-06 conserva cuarentena.
+El estado de cada feature sigue en README.
 
 ## 9. Resultado por posición Kafka
 
@@ -381,7 +393,8 @@ El README conserva el estado de implementación de esta feature.
 Se reutiliza el artefacto Java bajo un perfil exclusivo en un proceso Compose
 independiente. Esto evita perder la consola al detener una instancia y aprovecha
 las dependencias Kafka/JDBC existentes. Se excluyen listener y Flyway del perfil,
-y las aplicaciones sólo agregan observación de consumo habilitada en demo.
+y las aplicaciones agregan observación y barreras de recuperación habilitadas
+explícitamente en demo, sin dar acceso al socket a esos procesos.
 La integración de runtime verifica que siguen existiendo exactamente dos miembros
 del grupo y que HTTP saludable no implica listener en ejecución.
 
@@ -392,8 +405,8 @@ aislamiento del permiso real. La API limita servicios, acciones y proyecto,
 rechaza mutaciones de otro origen y acota diagnósticos; no admite comandos libres
 ni borrados. Los logs son diagnóstico temporal, no errores persistidos de F-06.
 Una acción manual kill permite explorar fallas, pero no posiciona la caída entre
-commits ni certifica recuperación F-05. Los escenarios completos requieren su
-propia evidencia antes de atribuirles garantías.
+commits ni certifica recuperación F-05. Los recorridos guiados usan barreras
+observables antes de actuar y su evidencia se verifica mediante el smoke F-05.
 
 La consola representa identificadores y cantidades como cadenas y conserva el
 JSON del ER como texto en el navegador. Las consultas públicas mantienen su

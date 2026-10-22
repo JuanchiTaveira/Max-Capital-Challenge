@@ -18,9 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/internal/demo/recovery")
 public class RecoveryControlController {
   private final RecoveryBarrier barrier;
+  private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
-  public RecoveryControlController(RecoveryBarrier barrier) {
+  public RecoveryControlController(
+      RecoveryBarrier barrier, org.springframework.jdbc.core.JdbcTemplate jdbc) {
     this.barrier = barrier;
+    this.jdbc = jdbc;
   }
 
   @GetMapping
@@ -30,6 +33,14 @@ public class RecoveryControlController {
 
   @PostMapping("/arm")
   public Map<String, Object> arm(@RequestBody RecoveryBarrier.Arm request) {
+    if (Boolean.TRUE.equals(
+        jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM app.execution_report_ledger WHERE numeric_order_id=? AND fix_id=?)",
+            Boolean.class,
+            request.numericOrderId(),
+            request.fixId())))
+      throw new org.springframework.web.server.ResponseStatusException(
+          HttpStatus.CONFLICT, "La barrera requiere un ER nuevo del escenario");
     return barrier.arm(request);
   }
 

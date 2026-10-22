@@ -19,6 +19,10 @@ final class ScenarioGuidance {
           "Las órdenes y su historial se guardan en PostgreSQL. Reiniciar ambas aplicaciones después de consumir el lote no debe perder ni duplicar esos datos.";
       case "committed-input-only" ->
           "Un mensaje dentro de una transacción abortada no debe llegar al procesamiento. Tener una posición en Kafka no significa que el mensaje sea visible ni aplicado.";
+      case "settlement-once" ->
+          "Una orden completada produce una única liquidación confirmada, incluso con duplicados y caída después de guardar SQL. Una cancelación no produce liquidación.";
+      case "commit-boundary-recovery" ->
+          "La consola observa una frontera real antes de provocar cada caída o reasignación. Recupera el mismo mensaje y verifica secuencia, datos y liquidación. Reinicia las aplicaciones afectadas y conserva los datos.";
       default -> "Esta comprobación requiere una feature del núcleo todavía pendiente.";
     };
   }
@@ -50,6 +54,16 @@ final class ScenarioGuidance {
               "Confirmar la transacción con el mensaje de creación.",
               "Abortar una transacción con una ejecución parcial de 7 unidades.",
               "Confirmar la finalización y verificar que sólo creación y finalización son visibles y aplicadas.");
+      case "settlement-once" ->
+          List.of(
+              "Completar una orden y cancelar otra en particiones distintas.",
+              "Republicar terminales y creación; contar salidas confirmadas y comparar su fuente SQL.",
+              "Interrumpir otra finalización después de SQL, recuperar desde la otra instancia y restaurar ambas.");
+      case "commit-boundary-recovery" ->
+          List.of(
+              "Crear órdenes nuevas y observar cada frontera antes de terminar procesos.",
+              "Recuperar SQL abierto, SQL confirmado, envío aceptado, reasignación durante SQL y caída de ambas aplicaciones.",
+              "Comprobar sucesores, resultado original, una liquidación y retorno a dos consumidores. Cada ventana crítica se resuelve dentro de un paso.");
       default -> List.of();
     };
   }
@@ -176,6 +190,70 @@ final class ScenarioGuidance {
             "final",
             "Orden final e historial",
             "Completada; acumulado 10; contador y ledger 2, con fixId 1 y 3; ambas instancias coinciden");
+      }
+      case "settlement-once" -> {
+        add(
+            checks,
+            "filled",
+            "Orden completada",
+            "FILLED; 3 ER aplicados y ledger en secuencia; ambas consultas iguales");
+        add(
+            checks,
+            "cancelled",
+            "Orden cancelada",
+            "CANCELLED con parcial 4; 3 ER y ledger en secuencia");
+        add(
+            checks,
+            "duplicates",
+            "Republicaciones",
+            "3 DUPLICATE sin cambios de contador ni historial");
+        add(
+            checks,
+            "settlement",
+            "Salida confirmada",
+            "Un settlement por FILLED y cero por CANCELLED; fuente y cantidades originales");
+        add(
+            checks,
+            "recovery",
+            "Recuperación después de SQL",
+            "Mismo APPLIED y un settlement tras caída real y reasignación");
+        add(
+            checks,
+            "restored",
+            "Entorno recuperado",
+            "Dos consumidores activos, una partición cada uno");
+      }
+      case "commit-boundary-recovery" -> {
+        add(
+            checks,
+            "sql-open",
+            "Caída durante SQL",
+            "Rollback sin cambios parciales; reentrega y sucesores en secuencia");
+        add(
+            checks,
+            "sql-committed",
+            "Caída después de SQL",
+            "Resultado original conservado; una liquidación confirmada");
+        add(
+            checks,
+            "send-ack",
+            "Caída tras envío aceptado",
+            "Salida abierta invisible; una liquidación después de resolver intentos");
+        add(
+            checks,
+            "rebalance",
+            "Reasignación durante escritura",
+            "Nuevo propietario observado antes de liberar al anterior; intento obsoleto rechazado");
+        add(
+            checks,
+            "both-down",
+            "Caída de ambas instancias",
+            "Recuperación persistente, sucesores y nuevas órdenes en ambas particiones");
+        add(
+            checks,
+            "restored",
+            "Entorno recuperado",
+            "Dos consumidores activos, una partición cada uno");
       }
       default -> throw new IllegalArgumentException("Escenario sin guía");
     }

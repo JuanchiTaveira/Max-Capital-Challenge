@@ -7,6 +7,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsOptions;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.beans.factory.annotation.Value;
@@ -113,7 +114,8 @@ public class ConsoleSystem {
           admin.describeConsumerGroups(List.of(group)).all().get(4, TimeUnit.SECONDS).get(group);
       var committed =
           admin
-              .listConsumerGroupOffsets(group)
+              .listConsumerGroupOffsets(
+                  group, new ListConsumerGroupOffsetsOptions().requireStable(true))
               .partitionsToOffsetAndMetadata()
               .get(4, TimeUnit.SECONDS);
       var requests =

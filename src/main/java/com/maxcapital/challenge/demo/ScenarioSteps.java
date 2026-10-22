@@ -22,18 +22,21 @@ public class ScenarioSteps {
   private final ConsoleSystem system;
   private final InstanceAccess instances;
   private final DockerAccess docker;
+  private final RecoveryScenarios recovery;
 
   public ScenarioSteps(
       ConsoleKafka kafka,
       ConsoleQueries queries,
       ConsoleSystem system,
       InstanceAccess instances,
-      DockerAccess docker) {
+      DockerAccess docker,
+      RecoveryScenarios recovery) {
     this.kafka = kafka;
     this.queries = queries;
     this.system = system;
     this.instances = instances;
     this.docker = docker;
+    this.recovery = recovery;
   }
 
   void execute(DemoRun run, String scenario, Set<String> restoration) {
@@ -47,6 +50,8 @@ public class ScenarioSteps {
       case "terminal-duplicates" -> duplicates(run);
       case "restart-persistence" -> interleaved(run, true, restoration);
       case "committed-input-only" -> transactions(run);
+      case "settlement-once", "commit-boundary-recovery" ->
+          recovery.execute(run, scenario, this, restoration);
       default -> throw new IllegalArgumentException("Escenario no ejecutable");
     }
   }
@@ -55,13 +60,17 @@ public class ScenarioSteps {
     docker.control(service, "start");
   }
 
+  void restoreRecovery(DemoRun run) {
+    recovery.restore(run);
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> ready(DemoRun run) {
     return ready(run, "ready");
   }
 
   @SuppressWarnings("unchecked")
-  private Map<String, Object> ready(DemoRun run, String checkId) {
+  Map<String, Object> ready(DemoRun run, String checkId) {
     return await(
         run,
         "consumidores y dependencias listos",
@@ -433,7 +442,7 @@ public class ScenarioSteps {
         });
   }
 
-  private long fresh(DemoRun run, int partition) {
+  long fresh(DemoRun run, int partition) {
     long order;
     do {
       run.checkCancellation();
@@ -445,7 +454,7 @@ public class ScenarioSteps {
     return order;
   }
 
-  private ConsoleKafka.Record emit(
+  ConsoleKafka.Record emit(
       DemoRun run, long order, int fix, String status, int accumulated, int leaves) {
     run.checkCancellation();
     var record =
@@ -454,7 +463,7 @@ public class ScenarioSteps {
     return record;
   }
 
-  private ConsoleKafka.Record republish(DemoRun run, ConsoleKafka.Record original) {
+  ConsoleKafka.Record republish(DemoRun run, ConsoleKafka.Record original) {
     run.checkCancellation();
     var record = kafka.publish(original.key(), original.payload());
     run.message(record);
@@ -476,7 +485,7 @@ public class ScenarioSteps {
   }
 
   @SuppressWarnings("unchecked")
-  private void committed(DemoRun run, List<ConsoleKafka.Record> records) {
+  void committed(DemoRun run, List<ConsoleKafka.Record> records) {
     await(
         run,
         "offsets de las posiciones emitidas confirmados",
@@ -500,7 +509,7 @@ public class ScenarioSteps {
   }
 
   @SuppressWarnings("unchecked")
-  private Map<String, Object> result(DemoRun run, ConsoleKafka.Record record) {
+  Map<String, Object> result(DemoRun run, ConsoleKafka.Record record) {
     return await(
         run,
         "resultado SQL de " + record.partition() + "/" + record.offset(),
@@ -518,7 +527,7 @@ public class ScenarioSteps {
     assertResults(run, records, outcome, null);
   }
 
-  private void assertResults(
+  void assertResults(
       DemoRun run, List<ConsoleKafka.Record> records, String outcome, String checkId) {
     var rows = new ArrayList<Map<String, Object>>();
     try {
@@ -558,7 +567,7 @@ public class ScenarioSteps {
   }
 
   @SuppressWarnings("unchecked")
-  private Map<String, Object> expectOrder(
+  Map<String, Object> expectOrder(
       DemoRun run, String checkId, long order, String status, int accumulated, int... fixes) {
     String id = Long.toString(order);
     var actual = queries.order(id);
@@ -651,14 +660,14 @@ public class ScenarioSteps {
             : " entradas de historial.");
   }
 
-  private static Map<String, Object> snapshot(Map<String, Object> observed) {
+  static Map<String, Object> snapshot(Map<String, Object> observed) {
     var snapshot = new LinkedHashMap<>(observed);
     snapshot.remove("source");
     snapshot.remove("observedAt");
     return snapshot;
   }
 
-  private static <T> T await(DemoRun run, String expected, Supplier<T> check) {
+  static <T> T await(DemoRun run, String expected, Supplier<T> check) {
     String last = "Sin observación";
     do {
       run.checkCancellation();
@@ -679,7 +688,7 @@ public class ScenarioSteps {
     } while (true);
   }
 
-  private static void require(boolean condition, String message) {
+  static void require(boolean condition, String message) {
     if (!condition) throw new IllegalStateException(message);
   }
 }

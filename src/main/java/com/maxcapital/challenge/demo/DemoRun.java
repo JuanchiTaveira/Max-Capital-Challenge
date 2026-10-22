@@ -30,6 +30,7 @@ final class DemoRun {
   private String error;
   private boolean cancelled;
   private boolean permit;
+  private Map<String, Object> restoration = Map.of();
   private int passed;
   private long deadline;
 
@@ -221,6 +222,10 @@ final class DemoRun {
           case "quantity-snapshots" -> List.of("clock", "snapshot-4");
           case "terminal-duplicates" -> List.of("duplicates", "final");
           case "committed-input-only" -> List.of("visibility", "no-result", "final");
+          case "settlement-once" -> List.of("settlement", "recovery", "restored");
+          case "commit-boundary-recovery" ->
+              List.of(
+                  "sql-open", "sql-committed", "send-ack", "rebalance", "both-down", "restored");
           default -> throw new IllegalStateException("Escenario desconocido");
         };
     current.conclusion =
@@ -233,6 +238,10 @@ final class DemoRun {
   synchronized void finish(String status, String error) {
     this.status = status;
     this.error = error;
+    if (status.equals("FAILED") && current != null && current.status.equals("PASSED")) {
+      current.status = "FAILED";
+      passed--;
+    }
     for (var scenario : scenarioResults.values()) {
       if (scenario.status.equals("PENDING")) {
         scenario.status = "NOT_RUN";
@@ -263,7 +272,8 @@ final class DemoRun {
     result.put("createdAt", createdAt);
     result.put("scenarioIds", scenarios);
     result.put("passedScenarios", passed);
-    result.put("excludedPending", 3);
+    result.put("excludedPending", 1);
+    result.put("restoration", restoration);
     result.put("orders", List.copyOf(orders));
     result.put("messages", List.copyOf(messages));
     result.put("steps", steps.stream().map(LinkedHashMap::new).toList());
@@ -272,6 +282,10 @@ final class DemoRun {
         scenarioResults.values().stream().map(ScenarioResult::snapshot).toList());
     result.put("error", error);
     return result;
+  }
+
+  synchronized void restoration(Map<String, Object> evidence) {
+    restoration = Map.copyOf(evidence);
   }
 
   static String message(Throwable ex) {

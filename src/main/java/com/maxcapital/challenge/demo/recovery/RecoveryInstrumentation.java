@@ -41,6 +41,12 @@ public class RecoveryInstrumentation {
           return new ProcessingResults() {
             @Override
             public Optional<StoredResult> find(InputPosition position, String payload) {
+              var report = JsonMapper.builder().build().readTree(payload);
+              barrier.identify(
+                  position,
+                  report.path("scenarioRun").asString(""),
+                  report.path("numericOrderId").asLong(),
+                  report.path("fixId").asLong());
               return delegate.find(position, payload);
             }
 

@@ -17,6 +17,10 @@ class RecoveryBarrierTest {
         new RecoveryBarrier.Arm("run", 1, 2, RecoveryBarrier.Boundary.BEFORE_SQL_COMMIT, 2000);
     var armed = barrier.arm(request);
     var control = new RecoveryBarrier.Control("run", armed.get("token").toString(), false);
+    barrier.identify(new InputPosition("in", 0, 4), "foreign", 1, 2);
+    barrier.reach(request.boundary(), new InputPosition("in", 0, 4), 1, 2);
+    assertThat(barrier.observe().get("state")).isEqualTo("ARMED");
+    barrier.identify(new InputPosition("in", 0, 4), "run", 1, 2);
     assertThatThrownBy(() -> barrier.arm(request)).hasMessageContaining("409");
     barrier.reach(request.boundary(), new InputPosition("in", 0, 4), 2, 2);
     assertThat(barrier.observe().get("state")).isEqualTo("ARMED");
@@ -44,6 +48,7 @@ class RecoveryBarrierTest {
     var barrier = new RecoveryBarrier("a");
     barrier.arm(
         new RecoveryBarrier.Arm("run", 1, 1, RecoveryBarrier.Boundary.AFTER_SQL_COMMIT, 100));
+    barrier.identify(new InputPosition("in", 0, 1), "run", 1, 1);
     assertThatThrownBy(
             () ->
                 barrier.reach(
@@ -53,6 +58,7 @@ class RecoveryBarrierTest {
         barrier.arm(
             new RecoveryBarrier.Arm(
                 "next", 2, 1, RecoveryBarrier.Boundary.BEFORE_SQL_COMMIT, 2000));
+    barrier.identify(new InputPosition("in", 1, 1), "next", 2, 1);
     var pending =
         CompletableFuture.runAsync(
             () ->

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.maxcapital.challenge.demo.DockerAccess;
 import com.maxcapital.challenge.demo.InstanceAccess;
+import com.maxcapital.challenge.demo.ScenarioCatalog;
 import com.maxcapital.challenge.demo.ScenarioRunner;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -122,6 +123,7 @@ class DemoScenariosIT {
 
   @MockitoBean DockerAccess docker;
   @MockitoSpyBean InstanceAccess instances;
+  @MockitoSpyBean ScenarioCatalog scenarioCatalog;
   @Autowired ScenarioRunner runner;
   @Autowired JdbcTemplate jdbc;
 
@@ -132,6 +134,17 @@ class DemoScenariosIT {
 
   @BeforeEach
   void controls() {
+    // Este fixture sustituye Docker: conserva el recorrido de los cinco escenarios
+    // originales. Las caídas de F-05 se ejercitan con procesos reales y Compose.
+    doReturn(
+            List.of(
+                "interleaved-orders",
+                "quantity-snapshots",
+                "terminal-duplicates",
+                "restart-persistence",
+                "committed-input-only"))
+        .when(scenarioCatalog)
+        .available();
     when(docker.control(anyString(), anyString()))
         .thenAnswer(
             call ->
@@ -145,17 +158,19 @@ class DemoScenariosIT {
   }
 
   @Test
-  void executesAvailableWithRealKafkaSqlAndTwoInstancesAndKeepsPendingExcluded() throws Exception {
+  void executesLegacyScenariosWithRealKafkaSqlAndKeepsPoisonExcluded() throws Exception {
     // GIVEN: Dos aplicaciones reales comparten Kafka y PostgreSQL; Docker está sustituido.
     var catalog = json.readTree(get("/catalog").body());
     assertThat(catalog.size()).isEqualTo(8);
     assertThat(catalog.get(0).path("title").asString()).isEqualTo("Dos órdenes en paralelo");
-    for (int index = 0; index < 5; index++) {
+    for (int index = 0; index < 7; index++) {
       assertThat(catalog.get(index).path("explanation").asString()).isNotBlank();
       assertThat(catalog.get(index).path("actions").size()).isEqualTo(3);
     }
     // WHEN
-    var pending = post("/runs", Map.of("scenario", "settlement-once", "mode", "automatic"));
+    assertThat(catalog.valueStream().filter(entry -> entry.path("available").asBoolean()).count())
+        .isEqualTo(7);
+    var pending = post("/runs", Map.of("scenario", "poison-recovery", "mode", "automatic"));
 
     // THEN
     assertThat(pending.statusCode()).isEqualTo(409);
@@ -174,7 +189,7 @@ class DemoScenariosIT {
         .describedAs(state.toPrettyString())
         .isEqualTo("PASSED");
     assertThat(state.path("passedScenarios").asInt()).isEqualTo(5);
-    assertThat(state.path("excludedPending").asInt()).isEqualTo(3);
+    assertThat(state.path("excludedPending").asInt()).isEqualTo(1);
     assertThat(state.path("messages").size()).isEqualTo(27);
     assertThat(state.path("scenarioResults").size()).isEqualTo(5);
     for (var scenario : state.path("scenarioResults")) {

@@ -77,6 +77,12 @@ public class ScenarioRunner {
       status = "FAILED";
       error = DemoRun.message(ex);
     } finally {
+      try {
+        steps.restoreRecovery(run);
+      } catch (RuntimeException ex) {
+        status = "FAILED";
+        error = "No se pudo restaurar recuperación: " + DemoRun.message(ex);
+      }
       for (String service : restoration) {
         try {
           steps.restore(service);
