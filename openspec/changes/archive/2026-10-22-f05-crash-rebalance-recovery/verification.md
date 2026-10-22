@@ -172,3 +172,11 @@ prueba coordinación y resultados de fallas, no demuestra un kill real.
   y ambos consumidores en ejecución con una partición cada uno.
 - La tabla de README se actualiza sólo después de estos resultados y de los
   cuatro smokes anteriores. F-06 no se inició.
+- OpenSpec confirmó 30/30 tareas completas. Se sincronizaron nueve requisitos
+  nuevos y cinco modificados en las cuatro capacidades existentes, preservando
+  títulos, propósitos, requisitos no afectados y escenarios anteriores. La
+  comparación posterior confirmó las cuatro delta specs íntegramente aplicadas.
+- Change archivado en `2026-10-22-f05-crash-rebalance-recovery`, con su metadata.
+  `openspec validate --all --strict`: diez specs aprobadas, cero errores;
+  `openspec list --json`: sin changes activos. `git diff --check`: sin errores.
+  Se conservan commits locales; no se hizo push.

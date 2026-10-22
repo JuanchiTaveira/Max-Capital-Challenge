@@ -49,7 +49,7 @@
 
 - [x] 7.1 Ejecutar `.\mvnw.cmd spotless:apply`, `.\mvnw.cmd spotless:check` y `.\mvnw.cmd verify`; registrar resultados y omisiones reales en verification.md del change y no completar F-05 si Docker u otra dependencia impide los criterios.
 - [x] 7.2 Ejecutar secuencialmente los smokes portables verify-f02, verify-f04, verify-f05 y verify-console con Compose reconstruido; registrar evidencia de datos conservados, fronteras observadas, dos miembros finales y conteos de salida, sin borrar volúmenes ni resetear offsets.
-- [ ] 7.3 Contrastar cada escenario de las cuatro delta specs con su evidencia en verification.md, actualizar sólo entonces la tabla F-05 y los límites pertinentes de README, y verificar `openspec validate --all --strict` y `git diff --check`; conservar commits locales coherentes sin push.
+- [x] 7.3 Contrastar cada escenario de las cuatro delta specs con su evidencia en verification.md, actualizar sólo entonces la tabla F-05 y los límites pertinentes de README, y verificar `openspec validate --all --strict` y `git diff --check`; conservar commits locales coherentes sin push.
 
 ## Workflow follow-up
 

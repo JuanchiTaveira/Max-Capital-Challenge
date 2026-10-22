@@ -120,6 +120,24 @@ un timeout como evidencia de aborto ni reenviar desde la posición local anterio
 - **THEN** recupera el progreso confirmado sin volver a publicar esa finalización
 - **AND** queda un único settlement visible y el sucesor puede procesarse
 
+#### Scenario: Process dies before terminal SQL commit
+- **GIVEN** un FILLED con escrituras SQL todavía sin confirmar
+- **WHEN** el proceso termina abruptamente y la partición se recupera
+- **THEN** el intento incompleto no conserva efectos SQL ni settlement confirmado
+- **AND** recuperar el ER deja una sola aplicación y exactamente un settlement confirmado con los datos del resultado original exitoso
+
+#### Scenario: Process dies after acknowledged settlement send
+- **GIVEN** un FILLED confirmado en SQL y un settlement cuyo envío fue aceptado dentro de una transacción Kafka todavía sin confirmar
+- **WHEN** el proceso termina abruptamente antes del commit Kafka y otro propietario recupera la partición
+- **THEN** el intento abierto se resuelve sin hacerse visible como una segunda salida read_committed
+- **AND** después de resolver los intentos y recuperar el progreso existe exactamente un settlement confirmado y el resultado SQL original permanece igual
+
+#### Scenario: Both applications restart with a pending completion
+- **GIVEN** un FILLED con resultado SQL confirmado, Kafka pendiente y sucesores publicados
+- **WHEN** ambas aplicaciones terminan abruptamente y vuelven a consumir el mismo grupo y datos
+- **THEN** recuperan el resultado original, completan el progreso y procesan los sucesores sin repetir efectos
+- **AND** después de resolver las transacciones pendientes se observa exactamente un settlement para FILLED y cero para órdenes CANCELLED del recorrido
+
 ### Requirement: Forward activation with pending F03 results
 La activación sobre F-03 SHALL conservar datos y offsets e incluir finalizaciones
 con resultado APPLIED FILLED y offset todavía pendiente. SHALL producir cero
