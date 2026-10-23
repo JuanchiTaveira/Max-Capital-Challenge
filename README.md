@@ -1,33 +1,11 @@
 # Max Capital — challenge backend
 
-Servicio de procesamiento de ExecutionReports desarrollado por features con OpenSpec.
-El enunciado está en [challenge-arch-max-capital..pdf](challenge-arch-max-capital.pdf),
-en la raíz del repositorio.
-F-01 aporta infraestructura y herramientas; F-02 procesa ER en secuencia por orden,
-persiste estado y ledger y los expone por HTTP desde las dos instancias. F-03
-conserva el resultado de cada posición Kafka resuelta para recuperarlo en reentregas.
-F-04 publica settlement y confirma el progreso de entrada en una transacción Kafka,
-con recuperación desde esos resultados SQL.
+Servicio en Java 25 y Spring Boot que consume ExecutionReports desde Kafka con
+dos instancias en paralelo. Mantiene la secuencia por orden, deduplica reportes,
+persiste estado y ledger en PostgreSQL y publica settlement al completar una orden.
+Incluye recuperación ante fallas, cuarentena y escenarios guiados para evaluarlo.
 
-## Guía rápida para evaluar
-
-Ejecutar los comandos desde la raíz del repositorio, con Docker activo:
-
-1. [Levantar el entorno](#ejecutar): `docker compose up --build`.
-2. Abrir [la consola de evaluación](http://localhost:8083). Empieza por **Dos órdenes en paralelo**: leer **Qué demuestra**, **Qué vamos a hacer** y **Qué debería pasar**; elegir **Automático** y pulsar **Ejecutar escenario**.
-3. Leer la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**, sin abrir JSON. **Ir al siguiente escenario** sólo lo selecciona; no publica nada. **Ejecutar todos** recorre los ocho y permite consultar cada resultado por separado.
-4. En modo **Paso a paso**, leer qué hará **Continuar paso** antes de pulsarlo; recargar conserva la ejecución y el escenario seleccionado por URL mientras la consola siga ejecutándose. **Evidencia técnica** contiene posiciones, snapshots y enlaces para inspeccionar órdenes, ledger y mensajes. En **Mensajes**, el editor permite publicar un NEW y luego un FILLED para la misma key, o republicar exactamente un registro.
-5. Ejecutar **Settlement único** y **Caídas entre commits y rebalanceos** para observar fallas posicionadas con barreras y su recuperación. En **Sistema**, observar salud, consumo, asignaciones y offsets. El kill manual sirve para explorar; por sí solo no ubica una frontera. **Mensajes inválidos y recuperación ordenada** muestra cuarentena, corrección auditada y reanudación.
-
-El evaluador sólo necesita Docker y un navegador. La verificación portable por API
-se ejecuta con `docker compose --profile tools run --build --rm verify-console`:
-también prueba caídas de dependencias y restaura los servicios, conservando datos.
-Ejecutar los smokes de a uno sobre este entorno de demo.
-
-También se conservan el [smoke F-02](#emitir-er-de-prueba-órdenes-intercaladas-y-duplicados),
-la [consulta HTTP](#consultar-una-orden), la [prueba manual F-03](#prueba-manual-de-f-03-en-powershell),
-las [consultas SQL](#consultar-las-tablas-con-sql) y la [lectura Kafka por CLI](#ver-los-mensajes-de-kafka).
-DBeaver es un cliente externo opcional para inspeccionar tablas fuera de la consola.
+[Enunciado](challenge-arch-max-capital.pdf) · [Decisiones de diseño](DECISIONS.md)
 
 ## Features
 
@@ -41,758 +19,81 @@ Esta tabla es la única fuente del estado de implementación.
 | F-04 | Settlement transaccional | Implementado |
 | F-05 | Recuperación ante caídas y rebalanceos | Implementado |
 | F-06 | Cuarentena y recuperación ordenada | Implementado |
-| F-07 | Entrega reproducible y documentación | Pendiente |
+| F-07 | Entrega reproducible y documentación | Implementado |
 | F-08 | Integración continua — opcional | Pendiente |
 | F-09 | Consola local de evaluación | Implementado |
 
-### Ensayos de recuperación de F-05
+## Levantar el proyecto
 
-Se verifican caídas con SQL abierto, después del commit SQL y después del envío
-aceptado antes del commit Kafka, reasignación con SQL abierto y caída de ambas apps.
-Compose activa explícitamente `APP_DEMO_RECOVERY_ENABLED=true` en las dos apps.
-Fuera de la demo los controles están deshabilitados por defecto. Las barreras
-temporales seleccionan una ejecución y un ER, con token de intento y generación
-de proceso: `BEFORE_SQL_COMMIT`, `AFTER_SQL_COMMIT` y
-`AFTER_SEND_ACK_BEFORE_KAFKA_COMMIT`. Cada barrera vence como máximo en 45 segundos;
-vencer deja el ER pendiente y nunca se interpreta como procesamiento exitoso.
+Requiere Docker con contenedores Linux y Compose, al menos 4 GB de RAM y los puertos
+8081, 8082, 8083, 9092 y 15432 libres. El primer build necesita internet; no requiere
+Java ni Maven instalados en el host.
 
-En la demo `max.poll.interval.ms` vale 10000, sesión 6000, heartbeat 1000 y timeout
-de transacción Kafka 60000 ms; JDBC usa `socketTimeout=30` segundos para permitir
-la espera del nuevo propietario mientras se libera SQL. Los pasos tienen presupuesto
-de 150 segundos. Estos ajustes no cambian la configuración ordinaria de la aplicación.
-Cada ventana crítica se completa dentro de un paso: el modo manual no deja una
-transacción abierta mientras espera que el evaluador pulse Continuar.
-
-La limpieza invalida barreras, inicia procesos terminados y reinicia aplicaciones
-con listener detenido antes de verificar dos consumidores. Conserva datos y evidencia;
-si falla, la ejecución informa qué falta restaurar. Una cancelación no borra los ER
-ya publicados: al recuperar el consumo pueden completarse sus efectos pendientes.
-Si se pierde el proceso de consola, las barreras vencen pero su historial en memoria
-no se recupera. Para restablecer consumo después de resolver la causa:
-
-```sh
-docker compose restart app-1 app-2
-```
-
-El smoke nuevo ejecuta los dos recorridos F-05 con controles Docker reales:
-
-```sh
-docker compose --profile tools run --build --rm verify-f05
-```
-
-Ejecutar smokes de a uno y conservar base, grupo, topics, particiones y volúmenes.
-El catálogo ofrece ocho escenarios ejecutables, incluidos Settlement único,
-Caídas entre commits y rebalanceos y Mensajes inválidos y recuperación ordenada,
-en modo automático y paso a paso. Las estrategias y sus límites se explican
-en DECISIONS.md; la evidencia completa se referencia al final de este README.
-
-## Cuarentena y recuperación de F-06
-
-Un permanente conserva key y valor originales en bytes en `quarantined_reports`.
-La DLQ `execution-reports-rejected` lleva sólo `schemaVersion`, `rejectionId`,
-`source` y `causeCode`; el original se consulta en SQL por su posición. El aviso
-es **al menos una vez**: una caída entre su commit Kafka y el marcador SQL puede
-repetir el mismo rejectionId. El offset inválido permanece pendiente.
-
-Se pausa toda esa partición, incluidas sus otras órdenes, mientras la otra continúa.
-Sólo SQLState `40P01`/`40001` con rollback conocido admite retry automático:
-cinco intentos totales, esperas base 500/1000/2000/4000 ms más jitter uniforme
-0–200 ms, máximo 5 s. El presupuesto vive en memoria y se renueva al reiniciar
-o cambiar de propietario. Las esperas suceden fuera de transacciones.
-
-Para inspeccionar una posición y registrar una corrección local:
-
-```sh
-curl 'http://localhost:8081/quarantine?topic=execution-reports&partition=0&offset=1'
-curl -X POST http://localhost:8081/quarantine/corrections -H 'Content-Type: application/json' --data-binary @correction.json
-docker compose restart app-1 app-2
-```
-
-Ejemplo de `correction.json` (sustituir posición e identidad por las del original):
-
-```json
-{
-  "requestId": "correction-001",
-  "source": {"topic": "execution-reports", "partition": 0, "offset": "1"},
-  "effectiveKey": "123",
-  "effectiveReport": {
-    "numericOrderId": 123, "fixId": 2, "status": "PARTIALLY_FILLED",
-    "nominalAmounts": 10, "accumulativeNominalAmount": 4,
-    "leavesNominalAmount": 6, "transactionTime": "2026-07-20T18:08:54.129",
-    "ticker": "VSCPC"
-  },
-  "reason": "Reparar el parcial ilegible", "declaredOperator": "evaluador local"
-}
-```
-
-POST devuelve 202 con metadata ACCEPTED; todavía no aplica negocio ni reanuda.
-Repetir requestId con el mismo contenido es idempotente; cambiarlo o tener otra
-corrección aceptada da 409. GET devuelve 404 si no hay cuarentena y conserva
-originales en Base64 e historial. La key canónica original no cambia y la key
-corregida debe corresponder a la misma partición. El responsable es declarado,
-sin autenticación, en este entorno local.
-
-Tras reiniciar se usa el ER efectivo en el offset original. Resolución, estado,
-contador, ledger y resultado comparten el commit SQL. Una corrección que viola
-negocio revierte y queda REJECTED, permitiendo otra sin borrar el historial.
-Una reentrega tras SQL recupera el resultado original y la publicación F-04/F-05.
-No hay comandos Kafka, workers, outbox ni tablas de sucesores.
-
-V3 es aditiva sobre V2. Conservar base, topics, grupo, particiones y volúmenes al
-actualizar ambas apps. Una base con migraciones de una implementación descartada
-requiere un entorno separado para probar esta versión; no borrar volúmenes ni
-modificar el historial Flyway para forzar su arranque.
-
-El escenario web **Mensajes inválidos y recuperación ordenada** usa órdenes nuevas,
-observa el bloqueo y la otra partición, corrige y reinicia con los controles existentes.
-Cancelar intenta resolver sólo su original y conserva evidencia; una falla de
-restauración se informa. Si se pierde la consola, consultar la DLQ/SQL, corregir y
-reiniciar manualmente. Verificación portable (con el entorno levantado):
-
-```sh
-docker compose --profile tools run --build --rm verify-f06
-```
-
-## Settlement transaccional de F-04
-
-### Contrato de settlement v1
-
-El contrato de salida usa JSON UTF-8 en `settlements`, con key igual al
-`numericOrderId` decimal. `schemaVersion` es el entero 1; `settlementId` vale
-`settlement:<numericOrderId>`. `numericOrderId`, `fixId`, `ledgerId`, las cantidades
-y `source.offset` son cadenas decimales exactas. `source` incluye también topic
-y partition (entero). Las cantidades usan representación decimal plana sin ceros
-fraccionarios innecesarios; cero se representa como `"0"`.
-
-La salida se reconstruye sólo de un resultado SQL original APPLIED FILLED.
-CANCELLED y DUPLICATE no generan salidas, aunque el snapshot del duplicado sea
-FILLED. La evidencia de implementación completa se registra en la tabla de features.
-
-### Publicación, recuperación y activación
-
-El contenedor confirma el settlement y el offset siguiente en una sola transacción
-Kafka después del commit SQL. No hay commit distribuido: la consulta HTTP puede
-mostrar FILLED antes de que read_committed observe el settlement. Ante aborto Kafka
-se recupera el resultado SQL; ante commit incierto se detiene la sesión y se retoma
-desde offsets estables, sin reenviar desde una posición local vieja.
-
-El diagnóstico ER pendiente incluye posición y causa. También un fallo posterior
-al retorno del listener detiene el contenedor; no descarta el registro tras varios
-intentos. Resolver la dependencia/falla y reiniciar la aplicación para reanudar:
-
-```sh
-docker compose restart app-1
-```
-
-Para actualizar desde F-03, detener ambas aplicaciones y reconstruirlas juntas:
-
-```sh
-docker compose stop app-1 app-2
-docker compose up -d --build --wait app-1 app-2
-```
-
-No hay migración SQL nueva ni backfill: un APPLIED FILLED de F-03 con offset pendiente
-sí se publica al recuperarse; una posición ya confirmada queda fuera de la activación.
-Su terminal republicado es DUPLICATE y no genera una salida retroactiva. Un ledger
-legado de F-02 sin resultado APPLIED conserva la deduplicación existente; no se
-inventan posiciones históricas.
-
-Conservar los prefijos INSTANCE_ID distintos, el mismo grupo, base, cluster, topics,
-particiones y retención. No resetear offsets ni borrar volúmenes. Volver a F-03
-puede confirmar pendientes sin settlement: ante un despliegue fallido detener ambas
-instancias y conservar el estado para corregir hacia adelante.
-
-La vista Mensajes inspecciona settlements como read_committed. El escenario guiado
-Settlement único verifica duplicados y recuperación después de SQL con la misma
-lectura; su evidencia se conserva por ejecución y se complementa con el smoke F-05.
-
-### Verificación portable de settlement
-
-Con el entorno levantado, ejecutar desde la raíz:
-
-```sh
-docker compose --profile tools run --build --rm verify-f04
-```
-
-El runner reutiliza el socket Docker local y la lectura `read_committed` de la
-consola. Comprueba dos miembros con una partición cada uno, publica órdenes nuevas
-FILLED/CANCELLED y republica terminales y un NEW tardío. Recorre ambas particiones
-de salida desde sus posiciones iniciales hasta el límite estable observado, y
-verifica exactamente un settlement para FILLED y cero para CANCELLED, junto con
-estado, contador, ledger y referencias del mensaje. No resetea offsets ni borra
-datos. Ejecutar smokes secuencialmente sobre la demo.
-
-La salida incluye IDs, posición Kafka y JSON completos para repetir la inspección.
-Este smoke no inyecta fallas entre commits: esas pruebas están en SettlementKafkaIT
-y se ejecutan con `.\mvnw.cmd verify`. La prueba con pérdida de respuesta delega un
-commit real y después inyecta timeout; no representa un corte físico de red.
-
-## Prerrequisitos y versiones
-
-Para ejecutar: Docker con contenedores Linux y Docker Compose, acceso a internet en
-el primer build y puertos 8081, 8082, 8083, 9092 y 15432 disponibles. Reservar al menos
-4 GB de RAM para Docker. Java y Maven del host no son necesarios para Compose.
-
-Para desarrollar y ejecutar Testcontainers: JDK 25, Docker y Maven Wrapper incluido.
-El smoke de órdenes F-02 sólo requiere Docker y Compose, igual que el entorno:
-no necesita PowerShell 7, Python, Java ni Maven instalados en el host.
-El smoke de infraestructura F-01, opcional para desarrollo, requiere PowerShell 7
-(`pwsh`). OpenSpec 1.14.1 requiere Node.js.
-
-| Componente | Versión |
-| --- | --- |
-| Java | 25, sin preview |
-| Spring Boot | 4.1.1 |
-| Maven Wrapper / Maven | 3.3.4 / 3.9.11 |
-| Kafka | 4.2.1 |
-| PostgreSQL | 17, imagen bookworm fijada por digest |
-| JUnit Jupiter / Testcontainers | 6.0.3 / 2.0.5, BOM de Spring Boot |
-| Spotless / google-java-format | 3.10.4 / 1.36.1 |
-| OpenSpec | 1.14.1 |
-
-## Ejecutar
+Desde la raíz del repositorio:
 
 ```sh
 docker compose up --build
 ```
 
-También funciona `docker compose up`: construye la imagen si aún no existe. Después
-de cambiar fuentes, usar `--build` para reconstruirla.
+Levanta Kafka, PostgreSQL, dos instancias de la aplicación y la
+[consola de evaluación](http://localhost:8083). Las aplicaciones atienden en
+[localhost:8081](http://localhost:8081) y [localhost:8082](http://localhost:8082);
+la consulta de una orden es `GET /orders/{numericOrderId}` e incluye estado,
+contador de ER aplicados y ledger en orden de inserción.
 
-| Servicio | Dirección en el host |
-| --- | --- |
-| app-1 | http://localhost:8081 |
-| app-2 | http://localhost:8082 |
-| Consola de evaluación | http://localhost:8083 |
-| Kafka | localhost:9092 |
-| PostgreSQL | localhost:15432 |
+## Ejecutar y verificar los escenarios
 
-Ambas aplicaciones exponen `/actuator/health/liveness`,
-`/actuator/health/readiness` y `/actuator/info`. Readiness depende de PostgreSQL y
-Kafka; liveness sólo representa la aplicación. Info distingue `app-1` y `app-2`.
+1. Abrir [http://localhost:8083](http://localhost:8083) y entrar en **Escenarios**.
+2. Empezar por **Dos órdenes en paralelo** y leer la explicación y el resultado esperado.
+3. Elegir **Automático** y pulsar **Ejecutar escenario**, o **Ejecutar todos** para recorrer los ocho. En **Paso a paso**, pulsar **Continuar paso** para avanzar.
+4. Verificar la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**. Cada escenario debe terminar aprobado; un error o timeout indica que la verificación falló.
+5. Abrir **Evidencia técnica** para inspeccionar posiciones y órdenes. Las vistas **Mensajes**, **Órdenes** y **Sistema** permiten consultar Kafka, estado/ledger y salud de los consumidores.
 
-```sh
-curl http://localhost:8081/actuator/health/readiness
-curl http://localhost:8082/actuator/info
-```
+Los ocho escenarios cubren órdenes intercaladas, snapshots, duplicados, persistencia,
+transacciones abortadas, settlement único, caídas entre commits/rebalanceos y
+cuarentena con corrección. Los ensayos de fallas restauran los servicios y conservan
+los datos. El historial de ejecuciones de la consola vive en memoria.
 
-La base, usuario y contraseña de demostración son `orders`. Son valores locales
-de este ejercicio. Se pueden cambiar con `POSTGRES_DB`, `POSTGRES_USER` y
-`POSTGRES_PASSWORD`. Las aplicaciones locales aceptan `DB_URL`, `DB_USER`,
-`DB_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS`, `INSTANCE_ID` y `SERVER_PORT`.
-
-## Consola de evaluación
-
-El paquete Java `demo` contiene las herramientas y escenarios para evaluar la
-aplicación. Los recursos de la interfaz web están en `src/main/resources/demo`.
-Para acceder, ejecutar `docker compose up --build` y abrir
-[http://localhost:8083](http://localhost:8083). La consola ofrece cuatro vistas:
-escenarios, mensajes, órdenes y sistema.
-Su proceso usa el perfil `evaluation-console`, no participa del grupo de órdenes
-ni ejecuta migraciones, y mantiene su salud propia aunque SQL, Kafka o una
-aplicación no respondan. Las aplicaciones exponen observación de sus listeners
-sólo con `APP_DEMO_OBSERVATION_ENABLED=true`, configurado en Compose.
-
-Sólo el contenedor de consola incorpora la CLI Docker y monta el socket del motor
-Linux, igual que el smoke existente. No requiere Java, Maven, Node ni clientes SQL
-en el host. El socket se configura mediante `SMOKE_DOCKER_SOCKET` si es necesario.
-El resto de las aplicaciones conserva sus permisos e interfaces habituales.
-
-Las consultas de consola distinguen el estado actual de la orden del snapshot
-histórico de cada posición `(topic, partition, offset)`. `Sin resultado registrado`
-no significa necesariamente error: puede ser un registro todavía no intentado.
-El contador cuenta ER aplicados, incluidos NEW y terminales; no títulos operados.
-El ledger completo se ordena por `ledgerId` y se obtiene junto al estado en el
-mismo snapshot SQL. Las lecturas de SQL, Kafka y HTTP pueden observar momentos
-distintos y muestran su fuente y fecha; un dato anterior tras un error es stale.
-
-La API propia `/demo/api/orders` lista órdenes con límite y cursor;
-`/demo/api/orders/{id}` expone el detalle y `/demo/api/results` consulta la tupla
-Kafka completa. Sus IDs y cantidades son cadenas para evitar redondeos del
-navegador. El contrato numérico público de `/orders/{id}` no cambia. Un duplicado
-tardío del NEW puede referir al ledger de NEW y conservar snapshot FILLED, mientras
-el resultado de la posición original mantiene snapshot NEW.
-
-La publicación manual valida JSON, key e incompatibilidades conocidas de identidad
-y transición antes de enviar. Es un preflight sobre un snapshot: otro productor
-puede cambiar la orden después, y la validación definitiva sigue en el consumidor.
-Una posición confirmada por Kafka no implica que SQL haya aplicado el ER; ambas
-etapas se muestran separadas. Ante confirmación incierta no se reenvía automáticamente.
-Republicar conserva key y payload y crea otro offset; no fuerza reentrega de la
-misma posición ni resetea offsets. Los mensajes se leen como `read_committed` por
-partición, sin participar del grupo de órdenes; puede haber huecos legítimos por
-transacciones abortadas. Los topics de salida vacíos no prueban garantías pendientes.
-
-Los controles locales permiten start/stop/restart de app-1, app-2, PostgreSQL y
-Kafka, y kill abrupto sólo de las aplicaciones. Resuelven exclusivamente un
-contenedor del proyecto Compose, incluyendo los detenidos; rechazan destinos
-ambiguos o ajenos. No admiten comandos libres, borrados de volúmenes/topics ni
-resets de offsets. Las mutaciones requieren JSON y origen local de la consola.
-El socket otorga acceso al motor y debe usarse sólo en esta demo local.
-
-Detener PostgreSQL o Kafka puede detener los consumidores: iniciar primero la
-dependencia y luego reiniciar las aplicaciones desde la consola. Si falta acceso
-al socket, los controles y logs lo informan, y las lecturas independientes siguen
-disponibles. La salud HTTP y el estado del consumidor son observaciones distintas;
-las asignaciones actuales no identifican quién procesó un resultado histórico.
-El lag cuenta posiciones Kafka, que también pueden incluir registros de control
-transaccional: no equivale necesariamente a cantidad de ER pendientes.
-
-El catálogo ofrece órdenes intercaladas, snapshots con reloj no creciente,
-duplicados terminales/tardíos, persistencia después de reiniciar, visibilidad de
-transacciones confirmadas/abortadas, settlement único y caídas entre commits y
-rebalanceos. Cada escenario informa precondiciones, resultado esperado y verificaciones
-reales; **Ejecutar todos** recorre los ocho. El escenario de cuarentena publica un poison
-propio, registra una corrección predefinida y reinicia las apps sin agregar pantallas.
-
-Sólo se admite una ejecución activa. El modo paso a paso permite inspeccionar
-cada etapa y continuar, incluso tras recargar la página por su URL. Los pasos de
-recuperación tienen plazo de 150 segundos; una pausa manual vence a los 30 minutos.
-Cancelar conserva efectos confirmados y evita los próximos envíos; se intentan
-restaurar los servicios que la propia ejecución alteró. Se generan órdenes nuevas
-y se conserva evidencia SQL/Kafka de cada repetición, sin borrar datos previos.
-El historial de hasta 50 ejecuciones vive en memoria: reiniciar la consola pierde
-esa coordinación, aunque las órdenes y posiciones sigan disponibles para inspección.
-Un poison previo o consumidores detenidos pueden impedir cumplir precondiciones;
-se informa el diagnóstico sin saltar registros ni resetear el grupo.
-
-La vista guiada comienza individualmente y separa cada resultado del lote. Las
-comparaciones provienen de comprobaciones del servidor y conservan sus observaciones
-capturadas; abrir la orden actual no reemplaza un snapshot histórico. Las filas sin
-observación, incompletas o fallidas quedan distinguidas de las verificadas. Un aborto
-transaccional previsto se explica como parte de la prueba. Las rutas de consola
-mantienen sus campos anteriores y agregan guía y resultados agrupados, sin migraciones.
-
-## Inspeccionar la base de datos y Kafka
-
-### Conectar PostgreSQL desde DBeaver
-
-Con el entorno levantado, crear una conexión de tipo **PostgreSQL** en DBeaver:
-
-| Campo | Valor de demostración |
-| --- | --- |
-| Host | `localhost` |
-| Puerto | `15432` |
-| Base de datos | `orders` |
-| Usuario | `orders` |
-| Contraseña | `orders` |
-
-Seleccionar **Probar conexión** y aceptar la descarga del driver PostgreSQL si
-DBeaver la solicita. Guardar la conexión y expandir **orders → Esquemas → app →
-Tablas**. Para abrir los registros: clic derecho en la tabla → **Ver datos →
-Todas las filas**. Si las tablas no aparecen tras actualizar la aplicación,
-refrescar el esquema `app`.
-
-| Tabla | Qué permite inspeccionar |
-| --- | --- |
-| `app.orders` | Estado y cantidades actuales; `applied_execution_count` cuenta ER aplicados, incluidos NEW y terminales, sin contar duplicados. No es la cantidad de títulos operados. |
-| `app.execution_report_ledger` | Historial de ER efectivamente aplicados, con reporte completo y `ledger_id` autoincremental. Un duplicado no agrega entradas. |
-| `app.processing_results` | Resultado `APPLIED`/`DUPLICATE` y snapshot por posición Kafka. Una republicación puede agregar un resultado sin agregar ledger. |
-| `app.flyway_schema_history` | Migraciones de base de datos ejecutadas. |
-
-Los valores de conexión corresponden a Compose desde el host. Si se modificaron
-`POSTGRES_DB`, `POSTGRES_USER` o `POSTGRES_PASSWORD`, usar los valores configurados.
-Una conexión rechazada puede indicar que PostgreSQL no está levantado: comprobar
-`docker compose ps` y, si hace falta, ejecutar `docker compose up -d postgres`.
-Las tablas de aplicación se crean al arrancar una instancia de la aplicación y
-ejecutar sus migraciones; levantar sólo PostgreSQL en un entorno nuevo no las crea.
-
-### Consultar las tablas con SQL
-
-En el editor SQL de DBeaver, obtener primero IDs que existan en esa base:
-
-```sql
-SELECT numeric_order_id, status, applied_execution_count,
-       nominal_amounts, accumulative_nominal_amount, leaves_nominal_amount
-FROM app.orders
-ORDER BY numeric_order_id DESC
-LIMIT 20;
-```
-
-También se pueden usar los IDs impresos por el smoke. En las consultas siguientes,
-reemplazar `13144742` por uno de esos IDs; el valor del ejemplo no se precarga:
-
-```sql
--- Estado actual de la orden.
-SELECT * FROM app.orders WHERE numeric_order_id = 13144742;
-
--- ER aplicados, en orden de inserción.
-SELECT ledger_id, fix_id, report
-FROM app.execution_report_ledger
-WHERE numeric_order_id = 13144742
-ORDER BY ledger_id;
-
--- Resultado de cada registro Kafka y snapshot al resolverlo.
-SELECT topic, partition_id, record_offset, outcome, fix_id, ledger_id,
-       status, applied_execution_count
-FROM app.processing_results
-WHERE numeric_order_id = 13144742
-ORDER BY topic, partition_id, record_offset;
-```
-
-La orden muestra el presente; el ledger explica cómo llegó a ese estado; los
-resultados conservan qué ocurrió con cada posición del flujo. Un resultado
-histórico puede tener otro snapshot que el estado actual. Los registros aplicados
-antes de F-03 pueden tener ledger sin resultados por posición.
-
-Sin DBeaver, las mismas consultas se pueden ejecutar con el cliente del contenedor:
+Para ejecutar la misma verificación por API, con el entorno levantado:
 
 ```sh
-docker compose exec postgres psql -U orders -d orders
+docker compose --profile tools run --build --rm verify-console
 ```
 
-Dentro de `psql`, `\dt app.*` lista las tablas y `\q` sale del cliente.
+Debe terminar con código 0 y `CONSOLE OK`, `scenarios=8` y `pending=0`. También verifica
+caídas de PostgreSQL/Kafka y restauración. Ejecutar los recorridos de a uno, sin
+controles manuales concurrentes. La consola necesita acceso al socket Docker local;
+Compose lo monta para controlar únicamente los servicios de esta demo.
 
-### Ver los mensajes de Kafka
+## Ejecutar los tests
 
-Listar los topics desde la raíz del repositorio:
-
-```sh
-docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list
-```
-
-Leer los ER conservados desde el comienzo y seguir viendo nuevos mensajes:
-
-```sh
-docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:29092 --topic execution-reports --from-beginning --isolation-level read_committed --formatter-property print.key=true --formatter-property print.partition=true --formatter-property print.offset=true
-```
-
-La salida muestra **key (`numericOrderId`), partición, offset y JSON del ER**.
-`Ctrl+C` detiene la visualización. Este comando usa un consumidor independiente:
-no elimina los mensajes ni cambia los offsets del grupo de las aplicaciones.
-No agregar `--group max-capital-orders-v1`, porque ese grupo corresponde al
-procesamiento de órdenes. `read_committed` excluye transacciones productoras
-abortadas.
-
-Para una lectura acotada, agregar `--max-messages 10 --timeout-ms 10000` al
-comando: termina al leer diez mensajes o al agotar diez segundos sin recibir
-mensajes; el timeout puede terminar con código distinto de cero. Las
-republicaciones aparecen como registros distintos, aunque la aplicación las haya
-clasificado como `DUPLICATE`.
-
-La dirección `localhost:29092` se usa **dentro del contenedor Kafka**. Para conectar
-una herramienta desde el host, usar `localhost:9092`. La vista **Mensajes** de la
-consola permite inspeccionar el broker; estos comandos son una alternativa.
-El estado actual de cada orden también se consulta por HTTP o en `app.orders`.
-
-## Formato y pruebas
-
-### Contrato de ExecutionReport
-
-El productor debe publicar JSON UTF-8 con key igual a `numericOrderId` en decimal
-canónico. Campos obligatorios: `fixId` y `numericOrderId` enteros positivos de
-64 bits, `status`, `nominalAmounts`, `leavesNominalAmount`,
-`accumulativeNominalAmount` y `transactionTime` ISO-8601 local o con offset.
-Las cantidades admiten 12 dígitos enteros y 8 decimales sin redondear.
-[Ejemplo del formato del enunciado](examples/execution-report.json). Los campos
-adicionales se conservan en el ledger. El ejemplo es un parcial: debe publicarse
-después del NEW correspondiente.
-
-La orden empieza con NEW (acumulado cero y restante total); los parciales aumentan
-el acumulado y reducen el restante. FILLED alcanza el total con restante cero;
-CANCELLED termina con restante cero y acumulado no decreciente. Las cantidades
-son snapshots: no se suman al acumulado anterior. El contador incluye cada ER
-aplicado, también NEW y terminal. `transactionTime` no establece secuencia.
-
-### Procesamiento y errores de F-02
-
-Cada instancia usa un consumidor del grupo `max-capital-orders-v1`. Dos particiones
-permiten que ambas consuman órdenes distintas; cada partición se procesa en serie.
-El productor debe mantener la misma key para todos los ER de una orden y usar
-el particionado estándar por key. No cambiar las particiones con órdenes en curso.
-
-Estado, contador y ledger se escriben en una transacción SQL. La identidad es
-`(numericOrderId, fixId)`: un ER idéntico ya aplicado es un no-op, incluso después
-de FILLED/CANCELLED; la misma identidad con otro contenido es error. El offset se
-confirma después del commit SQL. Una reentrega entre esas confirmaciones no agrega
-otra fila ni incrementa el contador.
-
-Un error permanente de JSON, key, transición o identidad conserva el original en
-cuarentena y pausa sólo su partición, sin confirmar el offset ni aplicar sucesores.
-Deadlock y serialización con rollback conocido se reintentan hasta cinco veces por
-sesión con backoff y jitter. Infraestructura, errores desconocidos y commits inciertos
-mantienen la detención operativa de F-05. Ver el flujo de corrección de F-06.
-F-03 incorpora resultados por posición; los ensayos de F-05 agregan fronteras de
-caída y rebalanceo. F-04 aporta la coordinación transaccional del settlement.
-
-### Resultados persistidos de F-03
-
-`app.processing_results` conserva un resultado por `(topic, partition_id,
-record_offset)`. `APPLIED` significa que ese registro aplicó el ER; `DUPLICATE`
-significa que el ER ya existía con contenido equivalente. Cada fila guarda su
-identidad, referencia al ledger y snapshot de estado, cantidades y contador.
-Resultado, estado, contador y ledger se confirman en la misma transacción SQL.
-
-Reentregar la **misma posición** devuelve el resultado original, incluso si fue
-`APPLIED` y la orden avanzó después. Republicar el mismo JSON crea **otro offset**
-y un resultado `DUPLICATE`; no incrementa contador ni ledger. La comparación
-JSONB incluye los campos adicionales. Un mismo identificador con otro contenido
-sigue siendo un error. Los errores no crean resultados exitosos: ausencia de
-fila no distingue entre registro no intentado y fallo.
-
-Para actualizar desde F-02, detener ambas aplicaciones y después reconstruirlas:
-
-```sh
-docker compose stop app-1 app-2
-docker compose up -d --build --wait app-1 app-2
-```
-
-Flyway aplica V2 sin borrar datos ni editar V1. Los ER históricos no tienen
-posición registrada, por lo que no se hace backfill ni se resetean offsets. Si
-uno aplicado en F-02 se reentrega sin resultado conocido, se registra `DUPLICATE`
-por su identidad de negocio. No mezclar consumidores F-02/F-03 durante el despliegue.
-
-### Prueba manual de F-03 en PowerShell
-
-Con el entorno actualizado, generar un ID nuevo y publicar `NEW`, `FILLED` y dos
-republicaciones. Estos comandos usan el productor Kafka y psql de los contenedores;
-no requieren Java ni herramientas de base instaladas en el host.
-
-```powershell
-$manualOrder = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-$newEr = [ordered]@{
-  fixId = 1; numericOrderId = $manualOrder; status = 'NEW'
-  nominalAmounts = 10; accumulativeNominalAmount = 0; leavesNominalAmount = 10
-  transactionTime = '2026-07-20T18:08:52.129'; ticker = 'VSCPC'
-} | ConvertTo-Json -Compress
-$filledEr = [ordered]@{
-  fixId = 2; numericOrderId = $manualOrder; status = 'FILLED'
-  nominalAmounts = 10; accumulativeNominalAmount = 10; leavesNominalAmount = 0
-  transactionTime = '2026-07-20T18:08:53.129'; ticker = 'VSCPC'
-} | ConvertTo-Json -Compress
-@("$manualOrder|$newEr", "$manualOrder|$filledEr",
-  "$manualOrder|$filledEr", "$manualOrder|$newEr") |
-  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh `
-    --bootstrap-server localhost:29092 --topic execution-reports `
-    --property parse.key=true --property 'key.separator=|'
-$manualOrder
-```
-
-El consumo es asíncrono. Repetir las consultas hasta observar las cuatro filas:
-
-```powershell
-Invoke-RestMethod "http://localhost:8081/orders/$manualOrder" | ConvertTo-Json -Depth 8
-Invoke-RestMethod "http://localhost:8082/orders/$manualOrder" | ConvertTo-Json -Depth 8
-docker compose exec -T postgres psql -U orders -d orders -c "SELECT topic, partition_id, record_offset, outcome, fix_id, ledger_id, status, applied_execution_count FROM app.processing_results WHERE numeric_order_id=$manualOrder ORDER BY topic, partition_id, record_offset;"
-```
-
-Ambas consultas HTTP deben mostrar `FILLED`, contador **2** y **2** entradas de
-ledger. En SQL se esperan estas filas, en offsets distintos de una misma partición:
-
-| ER enviado | Resultado | Snapshot | Contador | Referencia |
-| --- | --- | --- | --- | --- |
-| NEW | APPLIED | NEW | 1 | Ledger de NEW |
-| FILLED | APPLIED | FILLED | 2 | Ledger de FILLED |
-| FILLED repetido | DUPLICATE | FILLED | 2 | Mismo ledger de FILLED |
-| NEW repetido tras terminar | DUPLICATE | FILLED | 2 | Mismo ledger de NEW |
-
-Para comprobar persistencia, reiniciar y republicar el terminal:
-
-```powershell
-docker compose restart app-1 app-2
-"$manualOrder|$filledEr" | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:29092 --topic execution-reports --property parse.key=true --property 'key.separator=|'
-```
-
-Al reanudar, SQL debe tener una quinta fila `DUPLICATE`; HTTP conserva contador
-2 y dos entradas de ledger. Los datos quedan disponibles para inspección. Si se
-cambiaron las credenciales de Compose, ajustar `-U` y `-d` en las consultas.
-
-Esta prueba manual republica ER y comprueba persistencia; no fuerza una reentrega
-del mismo offset. Para verificar esa frontera sin modificar offsets del entorno,
-ejecutar las pruebas aisladas con Docker y JDK 25:
-
-```powershell
-.\mvnw.cmd verify '-Dit.test=ProcessingResultsIT,ProcessingResultsSchemaIT,ExecutionReportKafkaIT'
-```
-
-`recoversCommittedResultWhenOffsetCommitFailsBeforeReachingKafka` falla una
-confirmación antes de enviarla al broker, después de confirmar SQL, y comprueba
-reentrega, resultado inmutable y sucesor pendiente hasta recuperar. Usa inyección
-de fallo exclusiva de test; no demuestra kill de proceso ni rebalanceo durante
-escritura (F-05). La suite también verifica rollback y concurrencia SQL.
-
-
-### Consultar una orden
-
-`GET /orders/{numericOrderId}` devuelve estado y ledger juntos desde la base
-compartida. HTTP 404 significa orden inexistente; 400, identificador inválido.
-Las dos instancias exponen la misma consulta:
-
-```sh
-curl http://localhost:8081/orders/13144742
-curl http://localhost:8082/orders/13144742
-```
-
-Ejemplo después de aplicar sólo el NEW (los `ledgerId` son globales y pueden
-tener huecos). `report` conserva todos los campos del ER recibido:
-
-```json
-{
-  "numericOrderId": 13144742,
-  "status": "NEW",
-  "appliedExecutionCount": 1,
-  "nominalAmounts": 10,
-  "accumulativeNominalAmount": 0,
-  "leavesNominalAmount": 10,
-  "ledger": [{
-    "ledgerId": 1,
-    "report": {
-      "fixId": 1, "numericOrderId": 13144742, "status": "NEW",
-      "nominalAmounts": 10, "accumulativeNominalAmount": 0,
-      "leavesNominalAmount": 10, "transactionTime": "2026-07-20T18:08:52.129"
-    }
-  }]
-}
-```
-
-La consulta SQL única lee estado y ledger desde el mismo snapshot confirmado;
-el array se ordena por `ledgerId`, no por `transactionTime`.
-
-### Emitir ER de prueba: órdenes intercaladas y duplicados
-
-Desde la raíz del repositorio, el mismo comando funciona en Windows (PowerShell
-incluido o CMD), Linux y macOS, con Docker activo en modo contenedores Linux:
-
-```sh
-docker compose --profile tools run --build --rm verify-f02
-```
-
-El comando construye y levanta el entorno si hace falta, espera ambas aplicaciones
-saludables y ejecuta la verificación dentro de un contenedor temporal. Publica dos
-órdenes intercaladas en distintas particiones: una termina FILLED con cuatro ER
-aplicados y otra CANCELLED con tres. Repite ambos terminales y comprueba que los
-duplicados no aumenten el contador ni el ledger. Consulta ambas instancias,
-reinicia las dos aplicaciones, reenvía los terminales y verifica que el estado y el
-ledger completos sigan iguales. Espera offsets confirmados con lag cero.
-
-Al terminar muestra `F-02 OK`, los IDs generados y las URLs de consulta en 8081/8082.
-Un error termina con código distinto de cero y diagnóstico; no hace falta interpretar
-los logs para decidir si pasó. El entorno queda levantado y conserva volúmenes y
-órdenes de prueba con IDs aislados para inspección. Para repetir sin reconstruir:
-
-```sh
-docker compose --profile tools run --rm verify-f02
-```
-
-El perfil `tools` sólo se activa al pedirlo. El contenedor usa el socket Docker
-para ejecutar el productor Kafka y reiniciar las aplicaciones identificadas por
-las etiquetas del proyecto Compose. Ese acceso permite controlar el motor: es una
-herramienta local de demostración. No monta el repositorio ni publica puertos.
-En Docker rootless, configurar `SMOKE_DOCKER_SOCKET` con la ruta del socket del
-motor; se usa `/var/run/docker.sock` por defecto. Este comando requiere un socket
-Linux accesible desde el motor y no configura acceso a un Docker remoto.
-
-También se conserva el acceso opcional desde Windows PowerShell 5.1 o PowerShell 7,
-sin invocar `pwsh`:
-
-```powershell
-powershell -NoProfile -File scripts/verify-f02.ps1
-powershell -NoProfile -File scripts/verify-f02.ps1 -SkipBuild
-```
-
-**Límite actual:** el smoke reinicia ambas instancias después de consumir el lote.
-No verifica una caída de una sola instancia durante el procesamiento ni las fronteras
-de commit SQL/Kafka; esas fronteras tienen su runner específico verify-f05. La portabilidad de
-este smoke tampoco completa por sí sola la entrega reproducible de F-07.
-
-### Comandos de verificación
+Requiere JDK 25 y Docker activo para Testcontainers. Maven Wrapper está incluido.
 
 En PowerShell:
 
 ```powershell
-.\mvnw.cmd spotless:apply
-.\mvnw.cmd spotless:check
 .\mvnw.cmd verify
-pwsh -File scripts/verify-f01.ps1
-docker compose --profile tools run --build --rm verify-f02
-docker compose --profile tools run --build --rm verify-f04
-docker compose --profile tools run --build --rm verify-f05
-docker compose --profile tools run --build --rm verify-console
 ```
 
-En Linux/macOS, reemplazar `.\mvnw.cmd` por `./mvnw`. El smoke F-02 usa el mismo
-comando Compose en las tres plataformas. F-01 usa PowerShell 7 también en Linux/macOS.
-La suite Maven usa JUnit y Testcontainers;
-falla si Docker no está disponible. No hay Maven global requerido.
-
-Spotless aplica Google Style a Java: dos espacios, imports ordenados y sin uso
-eliminados, UTF-8 y LF. `validate` comprueba formato sin editar. `apply` corrige
-fuentes. El build de imagen omite tests, pero mantiene ese check; no reemplaza
-`verify` ni el smoke.
-
-Los smokes detienen o recrean contenedores del proyecto. Ejecutarlos sobre el entorno
-local de demostración, de a uno. F-01 limpia sus marcadores aislados y conserva los
-volúmenes; F-02 conserva también sus órdenes. `-SkipBuild` permite usar imágenes
-ya construidas en los lanzadores PowerShell.
-
-## Persistencia y diagnóstico
-
-`docker compose stop` / `docker compose start` detienen y reanudan. `docker compose
-down` elimina contenedores y conserva volúmenes. **`docker compose down -v` elimina
-los datos**: usarlo sólo para reiniciar expresamente una demo descartable.
+En Linux/macOS:
 
 ```sh
-docker compose ps -a
-docker compose logs app-1 app-2
-docker compose logs kafka postgres kafka-init
-docker info
+./mvnw verify
 ```
 
-Si Docker no responde, iniciar Docker Desktop y su motor Linux. Si un puerto está
-ocupado, detener el proceso que lo usa o ajustar el mapeo de Compose. El primer
-arranque descarga Maven, dependencias e imágenes. `kafka-init` debe terminar con
-código 0; se puede repetir sin recrear topics existentes.
+`verify` comprueba formato y ejecuta pruebas unitarias y de integración; debe terminar
+con `BUILD SUCCESS`, sin fallas ni omisiones. Construir la imagen no reemplaza estos
+tests. Para formatear Java: `spotless:apply` con el mismo Wrapper.
 
-## Desarrollo y decisiones
+## Detener y diagnosticar
 
-[AGENTS.md](AGENTS.md) guía el trabajo por feature.
-[DECISIONS.md](DECISIONS.md) justifica el diseño, sus supuestos y los límites de las garantías.
-El change OpenSpec de cada feature conserva requisitos, diseño, tareas y evidencia.
-Para validar: `openspec validate --all --strict`.
+```sh
+docker compose stop
+docker compose start
+docker compose logs app-1 app-2
+```
 
-[Evidencia de F-01](openspec/changes/archive/2026-10-17-f01-runtime-and-specs/verification.md):
-tres pruebas de integración, smoke completo de dos instancias, recuperación de
-dependencias, persistencia y build desde un clon limpio. Las tres specs están
-sincronizadas y el change está archivado.
+Los volúmenes conservan los datos. `docker compose down` elimina contenedores;
+`docker compose down -v` también elimina los datos.
 
-[Evidencia de F-02](openspec/changes/archive/2026-10-18-f02-order-processing-and-query/verification.md):
-cinco pruebas unitarias y once de integración (incluidas las tres de F-01), más
-el smoke de dos instancias con secuencia, duplicados y persistencia tras reinicio.
-
-[Evidencia del smoke F-02 portable](openspec/changes/archive/2026-10-19-portable-f02-smoke/verification.md):
-comando Compose y lanzador Windows PowerShell 5.1 verificados con Docker Desktop
-en Windows; errores de acceso al motor y selección de proyecto comprobados.
-
-Kafka usa un solo broker: el entorno verifica caídas de aplicaciones y reinicios,
-no supervivencia a pérdida física del volumen. La presencia de transacciones Kafka
-no demuestra por sí sola settlement exactamente una vez. Esa garantía se verifica
-por separado mediante SettlementKafkaIT y el smoke F-04.
-
-[Evidencia de F-03](openspec/changes/archive/2026-10-19-f03-persisted-processing-results/verification.md):
-suite completa con 5 unitarias y 21 integraciones, resultados inmutables,
-concurrencia y rollback SQL, falla controlada de confirmación Kafka posterior al
-commit SQL, migración V1→V2 conservando datos, smoke de dos instancias y prueba
-manual Windows PowerShell. Esa evidencia histórica no cubre settlement ni caídas
-reales durante escritura; F-04 agrega sus propias pruebas y F-05 amplía recuperación.
-
-[Evidencia de F-04](openspec/changes/archive/2026-10-21-f04-transactional-settlement/verification.md):
-9 unitarias y 46 integraciones en la suite completa, cero fallas/omisiones. Incluye
-settlement con dos miembros reales, rollback SQL, aborto de salida, respuesta de
-commit perdida, offsets pendientes, kill de una JVM tras SQL y reasignación real.
-El smoke portable verificó FILLED=1, CANCELLED=0 y republicaciones sin otra salida.
-SQL y Kafka tienen commits independientes; read_committed observa una única salida
-confirmada por orden cubierta, bajo los supuestos documentados.
-
-[Evidencia de F-05](openspec/changes/archive/2026-10-22-f05-crash-rebalance-recovery/verification.md):
-18 unitarias y 50 integraciones en la suite completa, cero fallas, errores u omisiones.
-Incluye kills con NEW/PARTIAL/FILLED antes del commit SQL, reasignación durante SQL
-con commit y rollback del propietario anterior, kill tras envío aceptado y caída de
-ambas JVM. Los cuatro smokes verify-f02, verify-f04, verify-f05 y verify-console
-aprobaron secuencialmente; el lote real ejecutó siete escenarios y conservó 113
-órdenes previas. También se verificaron ambos recorridos paso a paso en navegador,
-recarga, cancelación y restauración. Esta evidencia histórica corresponde a F-05.
-
-[Evidencia de F-06](openspec/changes/f06-quarantine-ordered-recovery/verification.md):
-21 pruebas unitarias y 57 integraciones aprobadas con Docker, sin fallas ni omisiones.
-Smokes F-06 y consola aprobados: ocho escenarios, ambos modos y cancelación con
-restauración; el recorrido repetido conserva 33 órdenes previas.
+Las garantías, supuestos y límites están en [DECISIONS.md](DECISIONS.md).
