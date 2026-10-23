@@ -25,7 +25,7 @@
 - [x] 4.1 Formatear el Java editado con `.\mvnw.cmd spotless:apply` y ejecutar `.\mvnw.cmd verify` con Docker; registrar resultado y conteos observados sin omitir pruebas. Si falta una dependencia, conservar el comando y bloqueo sin declarar implementación verificada.
 - [x] 4.2 Reconstruir la consola en el entorno de demo correspondiente y ejecutar secuencialmente `docker compose --profile tools run --build --rm verify-console`, ampliando ese runner sólo con comprobaciones del nuevo contrato si hacen falta; observar ocho escenarios aprobados, evidencia por corrida y restauración de dos consumidores, conservando datos y sin operar sobre proyectos ajenos.
 - [x] 4.3 Consolidar en verification.md de este change la revisión probada, comandos, resultado del smoke y QA de navegador: escenario 1 sin salir de ficha, duplicados, abort, snapshots, persistencia, settlement, caídas/cuarentena, herramientas avanzadas, recarga y 375 px. Enlazar la mejora de F-09 desde README sólo con esa evidencia, conservando estados existentes.
-- [ ] 4.4 Ejecutar `openspec validate --all --strict` y `git diff --check`, revisar que los cambios ejecutables están limitados a la consola/demo y conservar commits locales coherentes; verificar que no se alteraron núcleo, contratos públicos de órdenes, esquema SQL, dependencias ni garantías y detenerse antes de otra feature.
+- [x] 4.4 Ejecutar `openspec validate --all --strict` y `git diff --check`, revisar que los cambios ejecutables están limitados a la consola/demo y conservar commits locales coherentes; verificar que no se alteraron núcleo, contratos públicos de órdenes, esquema SQL, dependencias ni garantías y detenerse antes de otra feature.
 
 ## Workflow follow-up
 

@@ -1,6 +1,7 @@
 # Verification
 
 Fecha: 2026-10-23. Cambio sobre `343661a`, con modificaciones locales de consola/demo.
+Implementación conservada en el commit local `c03b87a`.
 
 ## Automated checks
 
@@ -25,6 +26,7 @@ Fecha: 2026-10-23. Cambio sobre `343661a`, con modificaciones locales de consola
 - Teclado: Tab mantiene foco visible; Enter sobre un ledger selecciona su mensaje relacionado.
 - Consulta actual separada: estado FILLED, hora propia y cantidades sin reemplazar el snapshot guardado.
 - Settlements: posición propia, posición de entrada y rango de lectura read_committed visibles.
+- Cuarentena en la versión final: corrida `1495fccc-a5f0-4208-8dce-70b7981c4b0c` aprobada; auditoría APPLIED, posición original y campos del ER original visibles como tablas, con payload original y ER efectivo desplegables.
 
 ## Compose smoke
 
