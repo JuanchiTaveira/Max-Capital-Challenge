@@ -2,6 +2,7 @@ package com.maxcapital.challenge.application;
 
 import com.maxcapital.challenge.application.ProcessingResult.Outcome;
 import com.maxcapital.challenge.domain.ExecutionReport;
+import com.maxcapital.challenge.domain.InvalidReport;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -9,15 +10,30 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProcessExecutionReport {
   private final OrderRepository repository;
   private final ProcessingResults results;
+  private final QuarantineStore quarantine;
 
-  public ProcessExecutionReport(OrderRepository repository, ProcessingResults results) {
+  public ProcessExecutionReport(
+      OrderRepository repository, ProcessingResults results, QuarantineStore quarantine) {
     this.repository = repository;
     this.results = results;
+    this.quarantine = quarantine;
   }
 
   // Estado, contador, ledger y resultado comparten el commit SQL; Kafka se confirma aparte.
   @Transactional("orderTransactionManager")
   public ProcessingResult process(InputPosition position, ExecutionReport report, String payload) {
+    return process(position, report, payload, null);
+  }
+
+  @Transactional("orderTransactionManager")
+  public ProcessingResult process(
+      InputPosition position, ExecutionReport report, String payload, String correctionId) {
+    var captured = quarantine.find(position, true);
+    if (captured.isPresent()
+        && (captured.get().state().equals("OPEN")
+            || correctionId == null
+            || !correctionId.equals(captured.get().correction().requestId())))
+      throw new IllegalStateException("La corrección seleccionada ya no está vigente");
     // Una reentrega recupera el resultado y snapshot originales, aunque la orden haya avanzado.
     var stored = results.find(position, payload);
     if (stored.isPresent()) {
@@ -37,7 +53,8 @@ public class ProcessExecutionReport {
     if (match.isPresent()) {
       // Reutilizar fixId con otro contenido es un conflicto de identidad, no un duplicado.
       if (!match.get().identical()) {
-        throw new IllegalArgumentException("contenido distinto para fixId " + report.fixId());
+        throw new InvalidReport(
+            "IDENTITY_CONFLICT", "contenido distinto para fixId " + report.fixId());
       }
       result =
           new ProcessingResult(
@@ -58,6 +75,7 @@ public class ProcessExecutionReport {
     }
     // Cada posición nueva conserva su resultado y snapshot en la misma transacción SQL.
     results.insert(result);
+    if (captured.isPresent()) quarantine.applied(position, result.outcome().name());
     return result;
   }
 

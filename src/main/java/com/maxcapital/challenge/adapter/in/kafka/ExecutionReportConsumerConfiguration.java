@@ -16,6 +16,8 @@ public class ExecutionReportConsumerConfiguration {
   ConcurrentKafkaListenerContainerFactory<Object, Object> executionReportContainerFactory(
       ConsumerFactory<Object, Object> consumerFactory,
       KafkaTransactionManager<Object, Object> transactionManager,
+      com.maxcapital.challenge.application.QuarantineStore quarantine,
+      com.maxcapital.challenge.application.RejectionPublisher publisher,
       @Value("${spring.kafka.listener.auto-startup:true}") boolean autoStartup) {
     var factory = new ConcurrentKafkaListenerContainerFactory<Object, Object>();
     factory.setConsumerFactory(consumerFactory);
@@ -25,7 +27,7 @@ public class ExecutionReportConsumerConfiguration {
     factory.getContainerProperties().setKafkaAwareTransactionManager(transactionManager);
     factory.getContainerProperties().setStopImmediate(true);
     factory.getContainerProperties().setStopContainerWhenFenced(true);
-    factory.setAfterRollbackProcessor(new StopAfterTransactionFailure());
+    factory.setAfterRollbackProcessor(new StopAfterTransactionFailure(quarantine, publisher));
     return factory;
   }
 }

@@ -80,6 +80,7 @@ class ExecutionReportKafkaIT {
   }
 
   @Autowired JdbcTemplate jdbc;
+  @Autowired com.maxcapital.challenge.application.QuarantineStore quarantine;
   @Autowired KafkaListenerEndpointRegistry registry;
   @Autowired ProducerFactory<Object, Object> producers;
 
@@ -93,7 +94,10 @@ class ExecutionReportKafkaIT {
     try (var admin = admin()) {
       admin
           .createTopics(
-              List.of(new NewTopic(TOPIC, 2, (short) 1), new NewTopic("settlements", 2, (short) 1)))
+              List.of(
+                  new NewTopic(TOPIC, 2, (short) 1),
+                  new NewTopic("settlements", 2, (short) 1),
+                  new NewTopic("execution-reports-rejected", 2, (short) 1)))
           .all()
           .get(20, TimeUnit.SECONDS);
     }
@@ -369,7 +373,10 @@ class ExecutionReportKafkaIT {
                 order,
                 report(
                     order, 3, existing ? "FILLED" : "NEW", existing ? 10 : 0, existing ? 0 : 10));
-        await().atMost(Duration.ofSeconds(20)).until(() -> !container.isRunning());
+        await()
+            .atMost(Duration.ofSeconds(20))
+            .until(
+                () -> container.isPartitionPaused(new TopicPartition(topic, pending.partition())));
 
         // THEN
         assertThat(resultAt(pending)).isEmpty();
@@ -384,8 +391,13 @@ class ExecutionReportKafkaIT {
                 "offset=" + pending.offset(),
                 "numericOrderId/key=" + order);
         // WHEN
+        container.stop();
+        container.resumePartition(new TopicPartition(topic, pending.partition()));
         container.start();
-        await().atMost(Duration.ofSeconds(20)).until(() -> !container.isRunning());
+        await()
+            .atMost(Duration.ofSeconds(20))
+            .until(
+                () -> container.isPartitionPaused(new TopicPartition(topic, pending.partition())));
 
         // THEN
         assertThat(committed(topic, pending.partition())).isEqualTo(offset);
@@ -398,6 +410,120 @@ class ExecutionReportKafkaIT {
   }
 
   @Test
+  @Order(5)
+  void retriesSerializationRollbackThenContinuesAndPausesAfterFiveFailures() throws Exception {
+    jdbc.execute("CREATE SEQUENCE app.f06_retry_attempts");
+    jdbc.execute(
+        """
+        CREATE FUNCTION app.f06_retry() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN IF NEW.numeric_order_id IN (91001,91002) THEN
+          IF nextval('app.f06_retry_attempts') = 1 OR NEW.numeric_order_id=91002 THEN
+            RAISE EXCEPTION 'retry serialization' USING ERRCODE='40001';
+          END IF;
+        END IF; RETURN NEW; END $$
+        """);
+    jdbc.execute(
+        "CREATE TRIGGER f06_retry BEFORE INSERT ON app.execution_report_ledger FOR EACH ROW EXECUTE FUNCTION app.f06_retry()");
+    int partition = -1;
+    try (var producer = producer(false)) {
+      var recovered = send(producer, 91001, report(91001, 1, "NEW", 0, 10));
+      await()
+          .atMost(Duration.ofSeconds(20))
+          .until(() -> committed(recovered.partition()) > recovered.offset());
+      assertThat(count(91001)).isEqualTo(1);
+      assertThat(jdbc.queryForObject("SELECT last_value FROM app.f06_retry_attempts", Long.class))
+          .isEqualTo(2);
+      var exhausted = send(producer, 91002, report(91002, 1, "NEW", 0, 10));
+      partition = exhausted.partition();
+      await()
+          .atMost(Duration.ofSeconds(25))
+          .until(
+              () -> listener().isPartitionPaused(new TopicPartition(TOPIC, exhausted.partition())));
+      assertThat(jdbc.queryForObject("SELECT last_value FROM app.f06_retry_attempts", Long.class))
+          .isEqualTo(7);
+      assertThat(resultAt(exhausted)).isEmpty();
+      assertThat(committed(partition)).isLessThanOrEqualTo(exhausted.offset());
+    } finally {
+      jdbc.execute("DROP TRIGGER f06_retry ON app.execution_report_ledger");
+      jdbc.execute("DROP FUNCTION app.f06_retry()");
+      jdbc.execute("DROP SEQUENCE app.f06_retry_attempts");
+      if (partition >= 0) {
+        listener().stop();
+        listener().resumePartition(new TopicPartition(TOPIC, partition));
+        start();
+        await()
+            .atMost(Duration.ofSeconds(20))
+            .untilAsserted(() -> assertThat(count(91002)).isEqualTo(1));
+      }
+    }
+  }
+
+  @Test
+  @Order(6)
+  @SuppressWarnings("unchecked")
+  void leavesInputPendingWhenDlqSendFailsAndCompletesNoticeBeforeCorrection() throws Exception {
+    listener().stop();
+    var factory = (DefaultKafkaProducerFactory<Object, Object>) producers;
+    var fail = new AtomicBoolean(true);
+    ProducerPostProcessor<Object, Object> interceptor =
+        delegate ->
+            (Producer<Object, Object>)
+                Proxy.newProxyInstance(
+                    Producer.class.getClassLoader(),
+                    new Class<?>[] {Producer.class},
+                    (proxy, method, arguments) -> {
+                      if (method.getName().equals("send")
+                          && arguments[0] instanceof ProducerRecord<?, ?> record
+                          && record.topic().equals("execution-reports-rejected")
+                          && fail.compareAndSet(true, false))
+                        throw new IllegalStateException("simulated DLQ send failure");
+                      try {
+                        return method.invoke(delegate, arguments);
+                      } catch (InvocationTargetException ex) {
+                        throw ex.getCause();
+                      }
+                    });
+    factory.reset();
+    factory.addPostProcessor(interceptor);
+    try (var producer = producer(false)) {
+      start();
+      long order = 92001;
+      var pending = send(producer, order, "{invalid-dlq");
+      awaitStopped();
+      assertThat(fail.get()).isFalse();
+      assertThat(committed(pending.partition())).isLessThanOrEqualTo(pending.offset());
+      assertThat(resultAt(pending)).isEmpty();
+      var source =
+          new com.maxcapital.challenge.application.InputPosition(
+              TOPIC, pending.partition(), pending.offset());
+      assertThat(quarantine.find(source, false).orElseThrow().notified()).isFalse();
+      quarantine.accept(
+          new com.maxcapital.challenge.application.QuarantineStore.Correction(
+              "dlq-retry",
+              source,
+              Long.toString(order),
+              report(order, 1, "NEW", 0, 10),
+              "Corregir JSON",
+              "test",
+              "ACCEPTED",
+              null,
+              null),
+          pending.partition());
+      start();
+      await()
+          .atMost(Duration.ofSeconds(20))
+          .until(() -> committed(pending.partition()) > pending.offset());
+      var resolved = quarantine.find(source, false).orElseThrow();
+      assertThat(resolved.notified()).isTrue();
+      assertThat(resolved.state()).isEqualTo("RESOLVED");
+      assertThat(count(order)).isEqualTo(1);
+    } finally {
+      factory.removePostProcessor(interceptor);
+      factory.reset();
+    }
+  }
+
+  @Test
   @Order(10)
   void preservesPoisonRecordAndDoesNotSkipToTheNextRecord() throws Exception {
     // GIVEN
@@ -406,7 +532,9 @@ class ExecutionReportKafkaIT {
       // WHEN
       var poison = send(producer, 801, invalidPayload);
       send(producer, 801, report(801, 1, "NEW", 0, 10));
-      awaitStopped();
+      await()
+          .atMost(Duration.ofSeconds(20))
+          .until(() -> listener().isPartitionPaused(new TopicPartition(TOPIC, poison.partition())));
 
       // THEN
       long offset = committed(poison.partition());
@@ -414,8 +542,12 @@ class ExecutionReportKafkaIT {
       assertThat(count(801)).isZero();
       assertThat(resultAt(poison)).isEmpty();
       // WHEN
+      listener().stop();
+      listener().resumePartition(new TopicPartition(TOPIC, poison.partition()));
       listener().start();
-      awaitStopped();
+      await()
+          .atMost(Duration.ofSeconds(20))
+          .until(() -> listener().isPartitionPaused(new TopicPartition(TOPIC, poison.partition())));
 
       // THEN
       assertThat(committed(poison.partition())).isEqualTo(offset);

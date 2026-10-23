@@ -21,7 +21,7 @@ spring:
       enable-auto-commit: false
       auto-offset-reset: earliest
       max-poll-records: 1
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      key-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
       value-deserializer: org.apache.kafka.common.serialization.ByteArrayDeserializer
       properties:
         isolation.level: read_committed

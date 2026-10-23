@@ -23,13 +23,14 @@ public record OrderState(
   public OrderState apply(ExecutionReport report) {
     if (numericOrderId != report.numericOrderId()
         || nominalAmounts.compareTo(report.nominalAmounts()) != 0) {
-      throw new IllegalArgumentException("el identificador y nominalAmounts no pueden cambiar");
+      throw new InvalidReport(
+          "INVALID_TRANSITION", "el identificador y nominalAmounts no pueden cambiar");
     }
     if ((appliedExecutionCount == 0 && report.status() != OrderStatus.NEW)
         || (appliedExecutionCount > 0
             && (status.isTerminal() || report.status() == OrderStatus.NEW))) {
-      throw new IllegalArgumentException(
-          "transición inválida desde " + status + " a " + report.status());
+      throw new InvalidReport(
+          "INVALID_TRANSITION", "transición inválida desde " + status + " a " + report.status());
     }
     var accumulated = report.accumulativeNominalAmount();
     var leaves = report.leavesNominalAmount();
@@ -47,8 +48,8 @@ public record OrderState(
           case CANCELLED -> leaves.signum() == 0;
         };
     if (!valid) {
-      throw new IllegalArgumentException(
-          "snapshot de cantidades incompatible con " + report.status());
+      throw new InvalidReport(
+          "INVALID_TRANSITION", "snapshot de cantidades incompatible con " + report.status());
     }
     return new OrderState(
         numericOrderId,

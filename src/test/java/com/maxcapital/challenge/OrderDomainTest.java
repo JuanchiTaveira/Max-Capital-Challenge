@@ -30,7 +30,10 @@ class OrderDomainTest {
     when(repository.match(2, 1, "payload"))
         .thenReturn(Optional.of(new OrderRepository.ReportMatch(1, true)));
     // WHEN
-    new ProcessExecutionReport(repository, mock(ProcessingResults.class))
+    new ProcessExecutionReport(
+            repository,
+            mock(ProcessingResults.class),
+            mock(com.maxcapital.challenge.application.QuarantineStore.class))
         .process(
             new InputPosition("unit-reports", 0, 0), report(OrderStatus.FILLED, 10, 0), "payload");
     // THEN

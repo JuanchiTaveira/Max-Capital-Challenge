@@ -235,6 +235,167 @@ class RecoveryKafkaIT {
     }
   }
 
+  @Test
+  void quarantinesOnePartitionWhileTwoMembersKeepPollingAndRecoversInOrder() throws Exception {
+    try (var h = new Harness(dir)) {
+      var a = h.start("quarantine-a", false, false);
+      var b = h.start("quarantine-b", false, false);
+      h.twoMembers();
+      int partition = h.partition(a);
+      long order = routedOrder(26001, partition);
+      long healthy = routedOrder(27001, 1 - partition);
+      h.committed(h.send(order, 1, "NEW", 0, 10, partition));
+      byte[] original = "{invalid-json".getBytes(StandardCharsets.UTF_8);
+      var poison =
+          h.producer
+              .send(new ProducerRecord<>(h.input, partition, Long.toString(order), original))
+              .get();
+      var terminal = h.send(order, 3, "FILLED", 10, 0, partition);
+      var initialStore =
+          b.context.getBean(com.maxcapital.challenge.application.QuarantineStore.class);
+      var source =
+          new com.maxcapital.challenge.application.InputPosition(
+              h.input, partition, poison.offset());
+      await()
+          .atMost(Duration.ofSeconds(20))
+          .until(() -> initialStore.find(source, false).map(e -> e.notified()).orElse(false));
+      h.committed(h.send(healthy, 1, "NEW", 0, 10, 1 - partition));
+      h.committed(h.send(healthy, 2, "FILLED", 10, 0, 1 - partition));
+      await()
+          .during(Duration.ofSeconds(7))
+          .atMost(Duration.ofSeconds(15))
+          .untilAsserted(
+              () -> {
+                assertThat(h.members()).isEqualTo(2);
+                assertThat(h.offset(partition)).isEqualTo(poison.offset());
+                assertThat(h.results(order)).hasSize(1);
+              });
+      // Un nuevo propietario vuelve a detectar OPEN y pausa sólo esta partición.
+      a.close();
+      await()
+          .atMost(Duration.ofSeconds(25))
+          .until(() -> h.listener(b).isPartitionPaused(new TopicPartition(h.input, partition)));
+      var notices =
+          h.records(h.rejected, "rejection:" + h.input + ":" + partition + ":" + poison.offset());
+      assertThat(notices).hasSize(1);
+      // Simula caída después del commit DLQ y antes del marcador SQL: aviso repetible.
+      h.jdbc.update(
+          "UPDATE app.quarantined_reports SET dlq_notified_at=NULL WHERE topic=?", h.input);
+      b.close();
+      var resumed = h.start("quarantine-resumed", false, false);
+      await()
+          .atMost(Duration.ofSeconds(20))
+          .until(
+              () -> h.listener(resumed).isPartitionPaused(new TopicPartition(h.input, partition)));
+      var repeated = h.records(h.rejected, notices.getFirst().key());
+      assertThat(repeated).hasSize(2);
+      assertThat(repeated.get(0).value()).isEqualTo(repeated.get(1).value());
+      var store =
+          resumed.context.getBean(com.maxcapital.challenge.application.QuarantineStore.class);
+      var correction =
+          new com.maxcapital.challenge.application.QuarantineStore.Correction(
+              "ordered:" + h.group,
+              source,
+              Long.toString(order),
+              TestInfrastructure.report(order, 2, "PARTIALLY_FILLED", 4, 6),
+              "Reparar parcial del ensayo",
+              "test",
+              "ACCEPTED",
+              null,
+              null);
+      store.accept(correction, partition);
+      assertThat(h.results(order)).hasSize(1); // POST/accept sólo guarda metadata.
+      resumed.close();
+      h.start("quarantine-final-a", false, false);
+      var finalB = h.start("quarantine-final-b", false, false);
+      h.twoMembers();
+      h.committed(terminal);
+      h.check(order, 1, 2, 3);
+      assertThat(h.output(order)).hasSize(1);
+      var resolved =
+          finalB
+              .context
+              .getBean(com.maxcapital.challenge.application.QuarantineStore.class)
+              .find(source, false)
+              .orElseThrow();
+      assertThat(resolved.state()).isEqualTo("RESOLVED");
+      assertThat(resolved.originalValue()).isEqualTo(original);
+      assertThat(resolved.correction().outcome()).isEqualTo("APPLIED");
+    }
+  }
+
+  @Test
+  void recoversCorrectedFilledAfterKillingItsJvmFollowingSqlCommit() throws Exception {
+    try (var h = new Harness(dir)) {
+      var a = h.start("corrected-child", true, true);
+      var b = h.start("corrected-survivor", false, true);
+      h.twoMembers();
+      int partition = 1 - h.partition(b);
+      long order = routedOrder(28001, partition);
+      h.committed(h.send(order, 1, "NEW", 0, 10, partition));
+      var source =
+          new com.maxcapital.challenge.application.InputPosition(
+              h.input, partition, h.offset(partition));
+      byte[] original = "{invalid-filled".getBytes(StandardCharsets.UTF_8);
+      var store = b.context.getBean(com.maxcapital.challenge.application.QuarantineStore.class);
+      store.capture(
+          source,
+          Long.toString(order).getBytes(StandardCharsets.UTF_8),
+          original,
+          "INVALID_FORMAT");
+      String effective =
+          TestInfrastructure.report(order, 2, "FILLED", 10, 0)
+              .replaceFirst("}\\s*$", ",\"scenarioRun\":\"" + h.group + "\"}");
+      store.accept(
+          new com.maxcapital.challenge.application.QuarantineStore.Correction(
+              "kill:" + h.group,
+              source,
+              Long.toString(order),
+              effective,
+              "Corregir FILLED",
+              "test",
+              "ACCEPTED",
+              null,
+              null),
+          partition);
+      h.arm(a, order, 2, "AFTER_SQL_COMMIT", 45000);
+      var pending =
+          h.producer
+              .send(new ProducerRecord<>(h.input, partition, Long.toString(order), original))
+              .get();
+      assertThat(pending.offset()).isEqualTo(source.offset());
+      h.reached(a);
+      var snapshot = h.results(order);
+      assertThat(snapshot).hasSize(2);
+      assertThat(h.output(order)).isEmpty();
+      assertThat(store.find(source, false).orElseThrow().state()).isEqualTo("RESOLVED");
+      h.kill(a);
+      h.committed(pending);
+      h.check(order, 1, 2);
+      assertThat(h.results(order)).isEqualTo(snapshot);
+      assertThat(h.output(order))
+          .singleElement()
+          .satisfies(
+              r -> {
+                var output = h.json.readTree(r.value());
+                assertThat(output.path("source").path("offset").asString())
+                    .isEqualTo(Long.toString(source.offset()));
+              });
+      assertThat(store.corrections(source))
+          .singleElement()
+          .satisfies(c -> assertThat(c.outcome()).isEqualTo("APPLIED"));
+    }
+  }
+
+  private static long routedOrder(long first, int partition) {
+    while (org.apache.kafka.common.utils.Utils.toPositive(
+                org.apache.kafka.common.utils.Utils.murmur2(
+                    Long.toString(first).getBytes(StandardCharsets.UTF_8)))
+            % 2
+        != partition) first++;
+    return first;
+  }
+
   static final class App implements AutoCloseable {
     String id;
     int port;
@@ -262,6 +423,7 @@ class RecoveryKafkaIT {
     final String input = "f05-" + UUID.randomUUID();
     final String output = input + "-out";
     final String group = input;
+    final String rejected = input + "-rejected";
     final Path dir;
     final List<App> apps = new ArrayList<>();
     final JsonMapper json = new JsonMapper();
@@ -286,7 +448,10 @@ class RecoveryKafkaIT {
       this.dir = dir;
       admin
           .createTopics(
-              List.of(new NewTopic(input, 2, (short) 1), new NewTopic(output, 2, (short) 1)))
+              List.of(
+                  new NewTopic(input, 2, (short) 1),
+                  new NewTopic(output, 2, (short) 1),
+                  new NewTopic(rejected, 2, (short) 1)))
           .all()
           .get(20, TimeUnit.SECONDS);
     }
@@ -305,6 +470,7 @@ class RecoveryKafkaIT {
                   "--app.instance-id=" + group + id,
                   "--app.execution-reports-topic=" + input,
                   "--app.settlements-topic=" + output,
+                  "--app.rejected-topic=" + rejected,
                   "--spring.kafka.consumer.group-id=" + group,
                   "--spring.kafka.consumer.client-id=" + id,
                   "--app.demo.observation-enabled=true",
@@ -560,6 +726,11 @@ class RecoveryKafkaIT {
     }
 
     List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> output(long order) {
+      return records(output, Long.toString(order));
+    }
+
+    List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records(
+        String topic, String key) {
       try (var reader =
           new org.apache.kafka.clients.consumer.KafkaConsumer<String, String>(
               Map.of(
@@ -573,7 +744,7 @@ class RecoveryKafkaIT {
                   "org.apache.kafka.common.serialization.StringDeserializer",
                   "value.deserializer",
                   "org.apache.kafka.common.serialization.StringDeserializer"))) {
-        var parts = List.of(new TopicPartition(output, 0), new TopicPartition(output, 1));
+        var parts = List.of(new TopicPartition(topic, 0), new TopicPartition(topic, 1));
         reader.assign(parts);
         reader.seekToBeginning(parts);
         var ends = reader.endOffsets(parts);
@@ -587,7 +758,7 @@ class RecoveryKafkaIT {
                       .poll(Duration.ofMillis(100))
                       .forEach(
                           r -> {
-                            if (r.key().equals(Long.toString(order))) found.add(r);
+                            if (r.key().equals(key)) found.add(r);
                           });
                   return parts.stream().allMatch(p -> reader.position(p) >= ends.get(p));
                 });

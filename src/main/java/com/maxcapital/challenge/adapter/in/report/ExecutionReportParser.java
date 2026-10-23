@@ -1,6 +1,7 @@
 package com.maxcapital.challenge.adapter.in.report;
 
 import com.maxcapital.challenge.domain.ExecutionReport;
+import com.maxcapital.challenge.domain.InvalidReport;
 import com.maxcapital.challenge.domain.OrderStatus;
 import java.math.BigDecimal;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,18 @@ public class ExecutionReportParser {
           .build();
 
   public ParsedReport parse(String key, byte[] bytes) {
+    try {
+      return parseReport(key, bytes);
+    } catch (InvalidReport invalid) {
+      throw invalid;
+    } catch (tools.jackson.core.JacksonException invalid) {
+      throw new InvalidReport("INVALID_FORMAT", "JSON de ER inválido");
+    } catch (IllegalArgumentException | java.time.DateTimeException invalid) {
+      throw new InvalidReport("INVALID_FIELDS", invalid.getMessage());
+    }
+  }
+
+  private ParsedReport parseReport(String key, byte[] bytes) {
     if (bytes == null) {
       throw new IllegalArgumentException("ER nulo");
     }
@@ -36,7 +49,7 @@ public class ExecutionReportParser {
             quantity(tree, "accumulativeNominalAmount"),
             string(tree, "transactionTime"));
     if (!Long.toString(report.numericOrderId()).equals(key)) {
-      throw new IllegalArgumentException("key Kafka distinta de numericOrderId");
+      throw new InvalidReport("INVALID_KEY", "key Kafka distinta de numericOrderId");
     }
     return new ParsedReport(report, json.writeValueAsString(tree));
   }
