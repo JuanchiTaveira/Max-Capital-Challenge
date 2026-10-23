@@ -1,12 +1,14 @@
 """Verificación portable de la consola, usando únicamente su API HTTP."""
 
 import json
+import os
 import sys
 import time
 from urllib.error import HTTPError
 from urllib.request import Request, ProxyHandler, build_opener
 
-BASE = "http://evaluation-console:8080"
+BASE = os.environ.get("CONSOLE_URL", "http://evaluation-console:8080")
+ORIGIN = os.environ.get("DEMO_ORIGIN", "http://localhost:8083")
 HTTP = build_opener(ProxyHandler({}))
 
 
@@ -15,7 +17,7 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def request(path, body=None, expected=200, origin="http://localhost:8083"):
+def request(path, body=None, expected=200, origin=ORIGIN):
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = Request(BASE + path, data=data)
     if body is not None:
@@ -32,7 +34,7 @@ def request(path, body=None, expected=200, origin="http://localhost:8083"):
         return json.loads(text) if text and path != "/" else text
 
 
-def api(path, body=None, expected=200, origin="http://localhost:8083"):
+def api(path, body=None, expected=200, origin=ORIGIN):
     return request("/demo/api" + path, body, expected, origin)
 
 
@@ -89,13 +91,12 @@ def main():
     wait(ready, "entorno preparado")
     before = existing_orders()
     catalog = api("/catalog")
-    require(sum(entry["available"] for entry in catalog) == 7, "Catálogo disponible incorrecto")
-    require(sum(not entry["available"] for entry in catalog) == 1, "Catálogo pendiente incorrecto")
-    api("/runs", {"scenario": "poison-recovery", "mode": "automatic"}, 409)
+    require(sum(entry["available"] for entry in catalog) == 8, "Catálogo disponible incorrecto")
+    require(all(entry["available"] for entry in catalog), "Catálogo pendiente incorrecto")
     api("/services/foreign/start", {}, 400)
     api("/services/app-1/start", {}, 403, "http://foreign.invalid")
 
-    print("[2/5] Ejecutar los siete escenarios disponibles por la API real", flush=True)
+    print("[2/5] Ejecutar los ocho escenarios disponibles por la API real", flush=True)
     run_id = api("/runs", {"scenario": "available", "mode": "automatic"})["id"]
 
     # Una falla definitiva se informa sin esperar todo el plazo de una condición transitoria.
@@ -107,9 +108,9 @@ def main():
             break
         require(time.monotonic() < deadline, f"La ejecución {run_id} excedió el plazo total")
         time.sleep(1)
-    require(run["passedScenarios"] == 7 and run["excludedPending"] == 1, str(run))
+    require(run["passedScenarios"] == 8 and run["excludedPending"] == 0, str(run))
     require(all(step["status"] == "PASSED" for step in run["steps"]), "Hay pasos sin verificación")
-    require(len(run["scenarioResults"]) == 7, "Faltan resultados por escenario")
+    require(len(run["scenarioResults"]) == 8, "Faltan resultados por escenario")
     for scenario in run["scenarioResults"]:
         require(scenario["status"] == "PASSED" and scenario["conclusion"], "Conclusión de escenario incompleta")
         require(all(check["status"] == "PASSED" and check["observed"] and check["references"]
@@ -154,9 +155,9 @@ def main():
     require(order_snapshot(sample) == preserved_sample, "Cambió el estado tras recuperar dependencias")
     for order, snapshot in before.items():
         require(order_snapshot(order) == snapshot, f"Se modificó una orden previa: {order}")
-    print(f"CONSOLE OK run={run_id} scenarios=7 pending=1 previousOrders={len(before)}", flush=True)
+    print(f"CONSOLE OK run={run_id} scenarios=8 pending=0 previousOrders={len(before)}", flush=True)
     print("Consola: http://localhost:8083 · se conservan órdenes, mensajes y volúmenes.", flush=True)
-    print("El kill manual no certifica fronteras de commit. Los escenarios guiados verifican fronteras observadas; cuarentena sigue pendiente de F-06.", flush=True)
+    print("Los escenarios guiados verifican fronteras observadas y cuarentena con corrección auditada.", flush=True)
 
 
 if __name__ == "__main__":

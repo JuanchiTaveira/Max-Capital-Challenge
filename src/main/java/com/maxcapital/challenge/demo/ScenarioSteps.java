@@ -23,6 +23,7 @@ public class ScenarioSteps {
   private final InstanceAccess instances;
   private final DockerAccess docker;
   private final RecoveryScenarios recovery;
+  private final QuarantineScenarios quarantine;
 
   public ScenarioSteps(
       ConsoleKafka kafka,
@@ -30,13 +31,15 @@ public class ScenarioSteps {
       ConsoleSystem system,
       InstanceAccess instances,
       DockerAccess docker,
-      RecoveryScenarios recovery) {
+      RecoveryScenarios recovery,
+      QuarantineScenarios quarantine) {
     this.kafka = kafka;
     this.queries = queries;
     this.system = system;
     this.instances = instances;
     this.docker = docker;
     this.recovery = recovery;
+    this.quarantine = quarantine;
   }
 
   void execute(DemoRun run, String scenario, Set<String> restoration) {
@@ -52,6 +55,7 @@ public class ScenarioSteps {
       case "committed-input-only" -> transactions(run);
       case "settlement-once", "commit-boundary-recovery" ->
           recovery.execute(run, scenario, this, restoration);
+      case "poison-recovery" -> quarantine.execute(run, this);
       default -> throw new IllegalArgumentException("Escenario no ejecutable");
     }
   }
@@ -62,6 +66,7 @@ public class ScenarioSteps {
 
   void restoreRecovery(DemoRun run) {
     recovery.restore(run);
+    quarantine.restore(run);
   }
 
   @SuppressWarnings("unchecked")
@@ -91,6 +96,10 @@ public class ScenarioSteps {
               var view = instances.read(service, "/internal/demo/consumer");
               require((int) view.get("statusCode") == 200, "Observación no disponible: " + service);
               var data = (JsonNode) view.get("data");
+              // Un reinicio puede cambiar las IP; esperar a observar la instancia solicitada.
+              require(
+                  data.path("instanceId").asString().equals(service),
+                  "Esperando resolución DNS de " + service);
               require(
                   data.path("running").asBoolean() && data.path("assignments").size() == 1,
                   "Consumidor no preparado: " + service);
@@ -474,8 +483,7 @@ public class ScenarioSteps {
     return record;
   }
 
-  private String report(
-      DemoRun run, long order, int fix, String status, int accumulated, int leaves) {
+  String report(DemoRun run, long order, int fix, String status, int accumulated, int leaves) {
     return """
         {"numericOrderId":%d,"fixId":%d,"status":"%s","nominalAmounts":10,
         "accumulativeNominalAmount":%d,"leavesNominalAmount":%d,

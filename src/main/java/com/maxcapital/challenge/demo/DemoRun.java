@@ -222,6 +222,7 @@ final class DemoRun {
           case "quantity-snapshots" -> List.of("clock", "snapshot-4");
           case "terminal-duplicates" -> List.of("duplicates", "final");
           case "committed-input-only" -> List.of("visibility", "no-result", "final");
+          case "poison-recovery" -> List.of("paused", "recovered", "outputs", "restored");
           case "settlement-once" -> List.of("settlement", "recovery", "restored");
           case "commit-boundary-recovery" ->
               List.of(
@@ -272,7 +273,7 @@ final class DemoRun {
     result.put("createdAt", createdAt);
     result.put("scenarioIds", scenarios);
     result.put("passedScenarios", passed);
-    result.put("excludedPending", 1);
+    result.put("excludedPending", 0);
     result.put("restoration", restoration);
     result.put("orders", List.copyOf(orders));
     result.put("messages", List.copyOf(messages));

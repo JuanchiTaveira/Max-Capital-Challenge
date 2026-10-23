@@ -103,10 +103,10 @@ public class ScenarioCatalog {
         new Entry(
             "poison-recovery",
             "Mensajes inválidos y recuperación ordenada",
-            false,
+            true,
             "F-06",
-            "Probar JSON/key inválidos, identidad conflictiva y orden incompleta",
-            List.of("Entorno de ensayo aislado y recuperación de F-06"),
+            "Conservar un parcial inválido, corregirlo y continuar la secuencia",
+            List.of("Dos consumidores; corrección predefinida sobre una orden nueva"),
             "Diagnóstico, conservación de pendientes y recuperación sin descartar ni saltar ER"));
   }
 

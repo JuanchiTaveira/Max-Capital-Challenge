@@ -95,7 +95,8 @@ public class RecoveryInstrumentation {
                                     && args[0] instanceof ProducerRecord<?, ?> record
                                     && record.value() instanceof byte[] bytes) {
                                   var json = JsonMapper.builder().build().readTree(bytes);
-                                  if (json.path("schemaVersion").asInt() == 1
+                                  if (json.has("settlementId")
+                                      && json.path("schemaVersion").asInt() == 1
                                       && json.has("source")) {
                                     ((Future<?>) value).get(20, TimeUnit.SECONDS);
                                     var source = json.path("source");

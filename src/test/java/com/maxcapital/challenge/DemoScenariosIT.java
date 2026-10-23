@@ -84,8 +84,8 @@ class DemoScenariosIT {
                   .toList())
           .all()
           .get(20, TimeUnit.SECONDS);
-      first = application("first");
-      second = application("second");
+      first = application("app-1");
+      second = application("app-2");
       await()
           .atMost(Duration.ofSeconds(45))
           .untilAsserted(
@@ -158,23 +158,18 @@ class DemoScenariosIT {
   }
 
   @Test
-  void executesLegacyScenariosWithRealKafkaSqlAndKeepsPoisonExcluded() throws Exception {
+  void executesLegacyScenariosWithRealKafkaSqlAndAdvertisesEightScenarios() throws Exception {
     // GIVEN: Dos aplicaciones reales comparten Kafka y PostgreSQL; Docker está sustituido.
     var catalog = json.readTree(get("/catalog").body());
     assertThat(catalog.size()).isEqualTo(8);
     assertThat(catalog.get(0).path("title").asString()).isEqualTo("Dos órdenes en paralelo");
-    for (int index = 0; index < 7; index++) {
+    for (int index = 0; index < 8; index++) {
       assertThat(catalog.get(index).path("explanation").asString()).isNotBlank();
       assertThat(catalog.get(index).path("actions").size()).isEqualTo(3);
     }
     // WHEN
     assertThat(catalog.valueStream().filter(entry -> entry.path("available").asBoolean()).count())
-        .isEqualTo(7);
-    var pending = post("/runs", Map.of("scenario", "poison-recovery", "mode", "automatic"));
-
-    // THEN
-    assertThat(pending.statusCode()).isEqualTo(409);
-    verifyNoInteractions(docker);
+        .isEqualTo(8);
     // WHEN
     var response = post("/runs", Map.of("scenario", "available", "mode", "automatic"));
 
@@ -189,7 +184,7 @@ class DemoScenariosIT {
         .describedAs(state.toPrettyString())
         .isEqualTo("PASSED");
     assertThat(state.path("passedScenarios").asInt()).isEqualTo(5);
-    assertThat(state.path("excludedPending").asInt()).isEqualTo(1);
+    assertThat(state.path("excludedPending").asInt()).isEqualTo(0);
     assertThat(state.path("messages").size()).isEqualTo(27);
     assertThat(state.path("scenarioResults").size()).isEqualTo(5);
     for (var scenario : state.path("scenarioResults")) {

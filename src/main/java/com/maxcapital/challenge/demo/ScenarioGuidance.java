@@ -23,6 +23,8 @@ final class ScenarioGuidance {
           "Una orden completada produce una única liquidación confirmada, incluso con duplicados y caída después de guardar SQL. Una cancelación no produce liquidación.";
       case "commit-boundary-recovery" ->
           "La consola observa una frontera real antes de provocar cada caída o reasignación. Recupera el mismo mensaje y verifica secuencia, datos y liquidación. Reinicia las aplicaciones afectadas y conserva los datos.";
+      case "poison-recovery" ->
+          "Un parcial ilegible pausa su partición. Se conserva en SQL y se avisa en DLQ. La corrección auditada y un reinicio permiten continuar por la misma posición sin adelantar el FILLED.";
       default -> "Esta comprobación requiere una feature del núcleo todavía pendiente.";
     };
   }
@@ -64,6 +66,11 @@ final class ScenarioGuidance {
               "Crear órdenes nuevas y observar cada frontera antes de terminar procesos.",
               "Recuperar SQL abierto, SQL confirmado, envío aceptado, reasignación durante SQL y caída de ambas aplicaciones.",
               "Comprobar sucesores, resultado original, una liquidación y retorno a dos consumidores. Cada ventana crítica se resuelve dentro de un paso.");
+      case "poison-recovery" ->
+          List.of(
+              "Crear una orden nueva y publicar un parcial ilegible seguido por FILLED.",
+              "Observar cuarentena y otra orden completada en la otra partición.",
+              "Registrar la corrección propia, reiniciar y verificar secuencia, auditoría y settlements.");
       default -> List.of();
     };
   }
@@ -254,6 +261,22 @@ final class ScenarioGuidance {
             "restored",
             "Entorno recuperado",
             "Dos consumidores activos, una partición cada uno");
+      }
+      case "poison-recovery" -> {
+        add(checks, "created", "Estado inicial", "NEW con contador y ledger en uno");
+        add(checks, "healthy", "Otra partición activa", "La orden sana completa con dos ER");
+        add(checks, "paused", "Error conservado", "Cuarentena y DLQ; sucesor sin aplicar");
+        add(
+            checks,
+            "recovered",
+            "Corrección auditada",
+            "Secuencia 1, 2, 3 en la posición original");
+        add(checks, "outputs", "Salidas confirmadas", "Un settlement por orden FILLED");
+        add(
+            checks,
+            "restored",
+            "Consumo restaurado",
+            "Dos consumidores activos; originales conservados");
       }
       default -> throw new IllegalArgumentException("Escenario sin guía");
     }
