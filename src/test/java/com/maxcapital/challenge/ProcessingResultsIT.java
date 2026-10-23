@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import com.maxcapital.challenge.adapter.in.report.ExecutionReportParser;
 import com.maxcapital.challenge.adapter.out.jdbc.JdbcOrderRepository;
 import com.maxcapital.challenge.adapter.out.jdbc.JdbcProcessingResults;
+import com.maxcapital.challenge.adapter.out.jdbc.JdbcQuarantineStore;
 import com.maxcapital.challenge.adapter.out.jdbc.OrderTransactionConfiguration;
 import com.maxcapital.challenge.adapter.out.kafka.SettlementJson;
 import com.maxcapital.challenge.application.HandleExecutionReport;
@@ -426,6 +427,7 @@ class ProcessingResultsIT {
         OrderTransactionConfiguration.class,
         JdbcOrderRepository.class,
         JdbcProcessingResults.class,
+        JdbcQuarantineStore.class,
         ProcessExecutionReport.class);
     app.refresh();
     return app;
