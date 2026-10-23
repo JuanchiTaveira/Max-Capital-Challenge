@@ -14,6 +14,8 @@ Implementación conservada en el commit local `c03b87a`.
 
 ## Browser review
 
+- Ajuste solicitado después de la entrega: órdenes apiladas en una columna, eliminando la grilla duplicada del contenedor. Escenario 1 aprobado tras reconstruir la consola; ambas tarjetas midieron 871 px, igual al ancho disponible, y la segunda comenzó debajo de la primera.
+
 - Seleccionar un escenario abre explicación y controles; no inicia el recorrido.
 - Escenario 1 aprobado: siete envíos, órdenes A/B, ledgers 4/3 y cantidades visibles dentro de la ficha.
 - Cancelación de orden: 10 solicitadas, 7 ejecutadas, 0 pendientes y explicación de 3 sin ejecutar.

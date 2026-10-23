@@ -124,7 +124,7 @@ summary { min-height: 28px; color: var(--ink); font-weight: 600; cursor: pointer
 .evidence-heading h4 { margin: 0; }
 .evidence-heading .help { margin-bottom: 4px; }
 .evidence-count { margin: 0; color: var(--muted); font-size: .86rem; white-space: nowrap; }
-.order-snapshots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin: 10px 0; }
+.order-snapshots { display: grid; grid-template-columns: minmax(0, 1fr); gap: 13px; margin: 10px 0; }
 .order-card { min-width: 0; padding: 13px 14px; border: 1px solid var(--line); border-left: 3px solid #7893a4; border-radius: 4px; background: #fbfcfd; }
 .order-card-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .order-card-heading h5 { min-width: 0; overflow-wrap: anywhere; }
@@ -166,7 +166,6 @@ summary { min-height: 28px; color: var(--ink); font-weight: 600; cursor: pointer
   #scenario-checks tr:last-child { border: 0; }
   #scenario-checks td { display: block; padding: 4px 10px; border: 0; }
   #scenario-checks td::before { display: block; margin-bottom: 2px; color: var(--muted); content: attr(data-label); font-size: .78rem; font-weight: 600; }
-  .order-snapshots { grid-template-columns: minmax(0, 1fr); }
   .message-inspector-grid { grid-template-columns: minmax(0, 1fr); }
   .table-wrap table { min-width: 680px; }
   #scenario-checks table { min-width: 0; }

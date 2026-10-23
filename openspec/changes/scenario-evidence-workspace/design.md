@@ -142,9 +142,9 @@ Las órdenes muestran primero su última observación capturada, con fuente y ho
 y ledger tabular (ledgerId, fixId, estado y cantidades del ER). Las observaciones
 anteriores son seleccionables dentro de la misma sección. Una acción separada
 Consultar estado actual usa el endpoint existente y presenta su respuesta con
-otra fecha; no reemplaza los snapshots de ejecución. Dos órdenes se comparan en
-columnas en escritorio; con más órdenes se usa un selector/listado compacto de
-las propias del escenario. El ledger y detalle siguen en la ficha.
+otra fecha; no reemplaza los snapshots de ejecución. Las órdenes se presentan
+una debajo de otra, cada una ocupando todo el ancho disponible de la ficha,
+para facilitar la lectura de su ledger y detalle.
 
 Los pasos/casos filtran evidencia sin mezclar corridas. Los cambios de selección
 invalidan respuestas de lecturas anteriores. El refresco conserva foco, fila
