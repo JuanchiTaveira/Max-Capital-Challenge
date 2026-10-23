@@ -140,7 +140,7 @@ function renderRun(run) {
   if (state.run?.id !== run.id && !state.explicitScenario) state.scenarioId = run.scenarioIds[0];
   state.run = run; $('run-overview').hidden = run.status === 'PASSED' && run.scenarioIds.length === 1;
   if (['PASSED', 'FAILED', 'CANCELLED'].includes(run.status) && !state.actionBusy && !state.runReadFailed) notice('scenario-notice', '');
-  $('run-heading').textContent = run.scenarioIds.length > 1 ? 'Recorrido de las cinco pruebas' : 'Prueba: ' + scenarioTitle(run.scenarioIds[0]);
+  $('run-heading').textContent = run.scenarioIds.length > 1 ? `Recorrido de ${run.scenarioIds.length} pruebas` : 'Prueba: ' + scenarioTitle(run.scenarioIds[0]);
   $('run-status').textContent = run.scenarioIds.length > 1
     ? `${labels[run.status] || run.status}. ${run.passedScenarios} de ${run.scenarioIds.length} pruebas aprobadas. ${run.excludedPending} pendientes no ejecutadas.`
     : `${labels[run.status] || run.status}.`;

@@ -15,9 +15,9 @@ Ejecutar los comandos desde la raíz del repositorio, con Docker activo:
 
 1. [Levantar el entorno](#ejecutar): `docker compose up --build`.
 2. Abrir [la consola de evaluación](http://localhost:8083). Empieza por **Dos órdenes en paralelo**: leer **Qué demuestra**, **Qué vamos a hacer** y **Qué debería pasar**; elegir **Automático** y pulsar **Ejecutar escenario**.
-3. Leer la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**, sin abrir JSON. **Ir al siguiente escenario** sólo lo selecciona; no publica nada. **Ejecutar todos** recorre los siete y permite consultar cada resultado por separado. Cuarentena queda pendiente de F-06.
+3. Leer la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**, sin abrir JSON. **Ir al siguiente escenario** sólo lo selecciona; no publica nada. **Ejecutar todos** recorre los ocho y permite consultar cada resultado por separado.
 4. En modo **Paso a paso**, leer qué hará **Continuar paso** antes de pulsarlo; recargar conserva la ejecución y el escenario seleccionado por URL mientras la consola siga ejecutándose. **Evidencia técnica** contiene posiciones, snapshots y enlaces para inspeccionar órdenes, ledger y mensajes. En **Mensajes**, el editor permite publicar un NEW y luego un FILLED para la misma key, o republicar exactamente un registro.
-5. Ejecutar **Settlement único** y **Caídas entre commits y rebalanceos** para observar fallas posicionadas con barreras y su recuperación. En **Sistema**, observar salud, consumo, asignaciones y offsets. El kill manual sirve para explorar; por sí solo no ubica una frontera. Mensajes permanentes y cuarentena siguen pendientes de F-06.
+5. Ejecutar **Settlement único** y **Caídas entre commits y rebalanceos** para observar fallas posicionadas con barreras y su recuperación. En **Sistema**, observar salud, consumo, asignaciones y offsets. El kill manual sirve para explorar; por sí solo no ubica una frontera. **Mensajes inválidos y recuperación ordenada** muestra cuarentena, corrección auditada y reanudación.
 
 El evaluador sólo necesita Docker y un navegador. La verificación portable por API
 se ejecuta con `docker compose --profile tools run --build --rm verify-console`:
@@ -40,7 +40,7 @@ Esta tabla es la única fuente del estado de implementación.
 | F-03 | Idempotencia y resultados persistidos | Implementado |
 | F-04 | Settlement transaccional | Implementado |
 | F-05 | Recuperación ante caídas y rebalanceos | Implementado |
-| F-06 | Cuarentena y recuperación ordenada | Pendiente |
+| F-06 | Cuarentena y recuperación ordenada | Implementado |
 | F-07 | Entrega reproducible y documentación | Pendiente |
 | F-08 | Integración continua — opcional | Pendiente |
 | F-09 | Consola local de evaluación | Implementado |
@@ -81,10 +81,77 @@ docker compose --profile tools run --build --rm verify-f05
 ```
 
 Ejecutar smokes de a uno y conservar base, grupo, topics, particiones y volúmenes.
-El catálogo ofrece siete escenarios ejecutables, incluidos Settlement único y
-Caídas entre commits y rebalanceos, en modo automático y paso a paso. Sólo
-cuarentena sigue pendiente de F-06. Las estrategias y sus límites se explican
+El catálogo ofrece ocho escenarios ejecutables, incluidos Settlement único,
+Caídas entre commits y rebalanceos y Mensajes inválidos y recuperación ordenada,
+en modo automático y paso a paso. Las estrategias y sus límites se explican
 en DECISIONS.md; la evidencia completa se referencia al final de este README.
+
+## Cuarentena y recuperación de F-06
+
+Un permanente conserva key y valor originales en bytes en `quarantined_reports`.
+La DLQ `execution-reports-rejected` lleva sólo `schemaVersion`, `rejectionId`,
+`source` y `causeCode`; el original se consulta en SQL por su posición. El aviso
+es **al menos una vez**: una caída entre su commit Kafka y el marcador SQL puede
+repetir el mismo rejectionId. El offset inválido permanece pendiente.
+
+Se pausa toda esa partición, incluidas sus otras órdenes, mientras la otra continúa.
+Sólo SQLState `40P01`/`40001` con rollback conocido admite retry automático:
+cinco intentos totales, esperas base 500/1000/2000/4000 ms más jitter uniforme
+0–200 ms, máximo 5 s. El presupuesto vive en memoria y se renueva al reiniciar
+o cambiar de propietario. Las esperas suceden fuera de transacciones.
+
+Para inspeccionar una posición y registrar una corrección local:
+
+```sh
+curl 'http://localhost:8081/quarantine?topic=execution-reports&partition=0&offset=1'
+curl -X POST http://localhost:8081/quarantine/corrections -H 'Content-Type: application/json' --data-binary @correction.json
+docker compose restart app-1 app-2
+```
+
+Ejemplo de `correction.json` (sustituir posición e identidad por las del original):
+
+```json
+{
+  "requestId": "correction-001",
+  "source": {"topic": "execution-reports", "partition": 0, "offset": "1"},
+  "effectiveKey": "123",
+  "effectiveReport": {
+    "numericOrderId": 123, "fixId": 2, "status": "PARTIALLY_FILLED",
+    "nominalAmounts": 10, "accumulativeNominalAmount": 4,
+    "leavesNominalAmount": 6, "transactionTime": "2026-07-20T18:08:54.129",
+    "ticker": "VSCPC"
+  },
+  "reason": "Reparar el parcial ilegible", "declaredOperator": "evaluador local"
+}
+```
+
+POST devuelve 202 con metadata ACCEPTED; todavía no aplica negocio ni reanuda.
+Repetir requestId con el mismo contenido es idempotente; cambiarlo o tener otra
+corrección aceptada da 409. GET devuelve 404 si no hay cuarentena y conserva
+originales en Base64 e historial. La key canónica original no cambia y la key
+corregida debe corresponder a la misma partición. El responsable es declarado,
+sin autenticación, en este entorno local.
+
+Tras reiniciar se usa el ER efectivo en el offset original. Resolución, estado,
+contador, ledger y resultado comparten el commit SQL. Una corrección que viola
+negocio revierte y queda REJECTED, permitiendo otra sin borrar el historial.
+Una reentrega tras SQL recupera el resultado original y la publicación F-04/F-05.
+No hay comandos Kafka, workers, outbox ni tablas de sucesores.
+
+V3 es aditiva sobre V2. Conservar base, topics, grupo, particiones y volúmenes al
+actualizar ambas apps. Una base con migraciones de una implementación descartada
+requiere un entorno separado para probar esta versión; no borrar volúmenes ni
+modificar el historial Flyway para forzar su arranque.
+
+El escenario web **Mensajes inválidos y recuperación ordenada** usa órdenes nuevas,
+observa el bloqueo y la otra partición, corrige y reinicia con los controles existentes.
+Cancelar intenta resolver sólo su original y conserva evidencia; una falla de
+restauración se informa. Si se pierde la consola, consultar la DLQ/SQL, corregir y
+reiniciar manualmente. Verificación portable (con el entorno levantado):
+
+```sh
+docker compose --profile tools run --build --rm verify-f06
+```
 
 ## Settlement transaccional de F-04
 
@@ -275,8 +342,8 @@ El catálogo ofrece órdenes intercaladas, snapshots con reloj no creciente,
 duplicados terminales/tardíos, persistencia después de reiniciar, visibilidad de
 transacciones confirmadas/abortadas, settlement único y caídas entre commits y
 rebalanceos. Cada escenario informa precondiciones, resultado esperado y verificaciones
-reales; **Ejecutar todos** recorre los siete. Mensajes inválidos y recuperación
-ordenada siguen pendientes de F-06; la consola no publica poison intencional.
+reales; **Ejecutar todos** recorre los ocho. El escenario de cuarentena publica un poison
+propio, registra una corrección predefinida y reinicia las apps sin agregar pantallas.
 
 Sólo se admite una ejecución activa. El modo paso a paso permite inspeccionar
 cada etapa y continuar, incluso tras recargar la página por su URL. Los pasos de
@@ -440,12 +507,11 @@ de FILLED/CANCELLED; la misma identidad con otro contenido es error. El offset s
 confirma después del commit SQL. Una reentrega entre esas confirmaciones no agrega
 otra fila ni incrementa el contador.
 
-Un error de JSON, key, transición, conflicto o SQL deja un diagnóstico `ER pendiente`
-con topic, partición, offset y key, y detiene el contenedor consumidor de esa
-instancia sin confirmar el ER fallido ni saltar al siguiente. Si esa instancia
-tenía ambas particiones, ambas se detienen. Tras resolver una falla transitoria,
-reiniciar la aplicación retoma desde el offset pendiente. Un ER inválido vuelve
-a fallar al reiniciar: F-06 incorporará cuarentena y recuperación ordenada.
+Un error permanente de JSON, key, transición o identidad conserva el original en
+cuarentena y pausa sólo su partición, sin confirmar el offset ni aplicar sucesores.
+Deadlock y serialización con rollback conocido se reintentan hasta cinco veces por
+sesión con backoff y jitter. Infraestructura, errores desconocidos y commits inciertos
+mantienen la detención operativa de F-05. Ver el flujo de corrección de F-06.
 F-03 incorpora resultados por posición; los ensayos de F-05 agregan fronteras de
 caída y rebalanceo. F-04 aporta la coordinación transaccional del settlement.
 
@@ -724,5 +790,9 @@ con commit y rollback del propietario anterior, kill tras envío aceptado y caí
 ambas JVM. Los cuatro smokes verify-f02, verify-f04, verify-f05 y verify-console
 aprobaron secuencialmente; el lote real ejecutó siete escenarios y conservó 113
 órdenes previas. También se verificaron ambos recorridos paso a paso en navegador,
-recarga, cancelación y restauración. F-06 conserva pendientes cuarentena y
-recuperación de errores permanentes.
+recarga, cancelación y restauración. Esta evidencia histórica corresponde a F-05.
+
+[Evidencia de F-06](openspec/changes/f06-quarantine-ordered-recovery/verification.md):
+21 pruebas unitarias y 57 integraciones aprobadas con Docker, sin fallas ni omisiones.
+Smokes F-06 y consola aprobados: ocho escenarios, ambos modos y cancelación con
+restauración; el recorrido repetido conserva 33 órdenes previas.

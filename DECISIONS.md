@@ -78,12 +78,27 @@ sesión detenida son mecanismos distintos.
 
 ## 7. Errores y límites
 
-Ante error se conserva el ER sin confirmar, se registra diagnóstico con su posición
-y se detiene el consumidor. Resolver una falla transitoria requiere corregir su causa
-y reiniciar. Un mensaje permanente puede bloquear indefinidamente su partición:
-clasificación, reintentos acotados, cuarentena y tratamiento de órdenes incompletas
-siguen pendientes de F-06. Descartar sólo el ER fallido y aplicar sucesores rompería
-la secuencia.
+Los errores permanentes se conservan en dos tablas: original binario único por
+posición en `quarantined_reports` y correcciones auditadas en `report_corrections`.
+La partición queda pausada con polls activos y offset pendiente; sus sucesores
+permanecen en Kafka y las demás particiones pueden continuar. Se acepta bloquear
+otras órdenes de la misma partición para mantener un mecanismo pequeño.
+
+Sólo deadlock/serialización SQL con rollback conocido tienen cinco intentos por
+sesión, backoff exponencial y jitter fuera de transacciones. No se persiste el
+presupuesto: reiniciar o cambiar de propietario lo renueva. Infraestructura,
+errores desconocidos, fencing y commit incierto conservan la detención F-05.
+
+La DLQ es un aviso al menos una vez con ID estable y referencia al original SQL.
+Publicar y marcar su notificación son commits separados: puede repetir el aviso,
+sin otra aplicación de negocio. Nunca confirma el offset inválido.
+
+Aceptar una corrección sólo guarda metadata, preserva identidad/routing y exige
+una sola ACCEPTED por posición. Reiniciar habilita la reentrega usando el ER efectivo
+en la posición original. Su resolución comparte el commit SQL de negocio; después
+se reutiliza settlement más offset de F-04/F-05. Una corrección rechazada conserva
+historial y habilita otra. No hay cola SQL de sucesores, comandos, workers ni outbox.
+El operador es declarado y las APIs son locales, sin autenticación.
 
 El entorno simplificado no cubre pérdida física de volúmenes, alta disponibilidad,
 resets arbitrarios de offsets ni recreación de topics. Las garantías requieren
