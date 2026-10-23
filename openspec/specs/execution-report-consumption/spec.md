@@ -53,7 +53,8 @@ reprocesar, sin avanzar al siguiente ER desde la sesión incierta.
 
 #### Scenario: Invalid transition
 - **WHEN** un ER válido en formato viola las reglas de transición de la orden
-- **THEN** no se confirma su offset y el diagnóstico identifica la orden y la causa
+- **THEN** no se confirma su offset, se conserva la cuarentena y el diagnóstico identifica la orden y la causa
+- **AND** se pausa sólo la partición hasta registrar una corrección y reiniciar el consumidor
 - **AND** no se publica settlement confirmado
 
 #### Scenario: SQL committed and offset confirmation fails
@@ -72,8 +73,8 @@ reprocesar, sin avanzar al siguiente ER desde la sesión incierta.
 #### Scenario: Invalid input remains uncommitted
 - **WHEN** falla JSON/key o el ER tiene una identidad aplicada con contenido distinto
 - **THEN** no se registra un resultado exitoso para esa posición ni se confirma su offset
-- **AND** se conserva el diagnóstico y se detiene el consumo de esa instancia sin saltar al siguiente registro
-- **AND** reanudar repetidamente no recupera el registro mediante descarte silencioso
+- **AND** se conserva la cuarentena y se pausa su partición sin saltar al siguiente registro; las otras particiones pueden continuar
+- **AND** reanudar sin una corrección aceptada no descarta el original ni adelanta sus sucesores
 
 #### Scenario: Output and offset share commit
 - **GIVEN** un FILLED elegible con resultado SQL confirmado

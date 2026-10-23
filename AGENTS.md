@@ -46,8 +46,7 @@ al completarla, informá la evidencia y detenete antes de comenzar la siguiente.
 1. Revisá estado Git y spec de la feature; preservá cambios ajenos.
 2. Implementá incrementos pequeños con las pruebas significativas correspondientes.
 3. Marcá tareas completas sólo con comportamiento implementado y evidencia observada.
-4. Actualizá documentación y tabla del README. Validá OpenSpec y archivá el change
-   después de verificar todos sus criterios.
+4. Actualizá documentación y tabla del README. Validá OpenSpec.
 5. Conservá commits locales por unidad coherente. No publiques, hagas push ni
    elimines volúmenes o archivos ajenos sin autorización específica.
 
