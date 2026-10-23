@@ -46,6 +46,9 @@ final class DemoRun {
     final String id;
     final Map<String, Map<String, Object>> checks;
     final List<Map<String, String>> orders = new ArrayList<>();
+    final List<Map<String, Object>> evidenceMessages = new ArrayList<>();
+    final List<Map<String, Object>> orderSnapshots = new ArrayList<>();
+    final List<Map<String, Object>> outputs = new ArrayList<>();
     String status = "PENDING";
     String conclusion = "Todavía no se ejecutó esta prueba.";
 
@@ -55,6 +58,10 @@ final class DemoRun {
     }
 
     Map<String, Object> snapshot() {
+      var evidence = new LinkedHashMap<String, Object>();
+      evidence.put("messages", evidenceMessages.stream().map(DemoRun::copyEvidence).toList());
+      evidence.put("orderSnapshots", List.copyOf(orderSnapshots));
+      evidence.put("outputs", List.copyOf(outputs));
       return Map.of(
           "scenarioId",
           id,
@@ -64,6 +71,8 @@ final class DemoRun {
           conclusion,
           "orders",
           List.copyOf(orders),
+          "evidence",
+          evidence,
           "checks",
           checks.values().stream().map(LinkedHashMap::new).toList());
     }
@@ -190,6 +199,7 @@ final class DemoRun {
   }
 
   synchronized void message(ConsoleKafka.Record record, String transaction) {
+    var now = Instant.now().toString();
     var message =
         new LinkedHashMap<String, Object>(
             Map.of(
@@ -208,7 +218,124 @@ final class DemoRun {
     message.put("id", record.topic() + "/" + record.partition() + "/" + record.offset());
     message.put("scenarioId", current.id);
     message.put("stepId", currentStep.get("id"));
+    message.put("observedAt", now);
     messages.add(message);
+
+    var position = new LinkedHashMap<String, Object>();
+    position.put("topic", record.topic());
+    position.put("partition", record.partition());
+    position.put("offset", record.offset());
+    var report = new LinkedHashMap<String, Object>();
+    try {
+      var payload = ConsoleValues.JSON.readTree(record.payload());
+      for (String field :
+          List.of(
+              "fixId",
+              "numericOrderId",
+              "status",
+              "nominalAmounts",
+              "leavesNominalAmount",
+              "accumulativeNominalAmount",
+              "transactionTime")) {
+        var value = payload.get(field);
+        if (value != null && !value.isNull())
+          report.put(field, value.isValueNode() ? value.asString() : value.toString());
+      }
+    } catch (RuntimeException ignored) {
+      // Keep the original payload and leave the summary empty for invalid JSON.
+    }
+    var evidence = new LinkedHashMap<String, Object>();
+    evidence.put("id", message.get("id"));
+    evidence.put("source", position);
+    evidence.put("scenarioId", current.id);
+    evidence.put("stepId", currentStep.get("id"));
+    evidence.put("observedAt", now);
+    evidence.put("key", record.key());
+    evidence.put("payload", record.payload());
+    evidence.put("transaction", transaction);
+    evidence.put("report", report);
+    evidence.put("sqlObservationStatus", "NOT_QUERIED");
+    evidence.put("sqlObservations", new ArrayList<Map<String, Object>>());
+    current.evidenceMessages.add(evidence);
+  }
+
+  synchronized void sqlObservation(
+      ConsoleKafka.Record record, String status, Map<String, Object> result) {
+    var id = record.topic() + "/" + record.partition() + "/" + record.offset();
+    for (var message : current.evidenceMessages) {
+      if (id.equals(message.get("id"))) {
+        message.put("sqlObservationStatus", status);
+        var observation = new LinkedHashMap<String, Object>();
+        observation.put("status", status);
+        observation.put("observedAt", Instant.now().toString());
+        observation.put("source", "PostgreSQL");
+        observation.put("result", result.get("result"));
+        @SuppressWarnings("unchecked")
+        var observations = (List<Map<String, Object>>) message.get("sqlObservations");
+        observations.add(observation);
+        return;
+      }
+    }
+  }
+
+  synchronized boolean hasSqlObservation(ConsoleKafka.Record record) {
+    String id = record.topic() + "/" + record.partition() + "/" + record.offset();
+    return current.evidenceMessages.stream()
+        .filter(message -> id.equals(message.get("id")))
+        .map(message -> (List<?>) message.get("sqlObservations"))
+        .anyMatch(observations -> !observations.isEmpty());
+  }
+
+  synchronized void orderSnapshot(
+      String id, String label, String checkId, Map<String, Object> snapshot) {
+    var value = new LinkedHashMap<String, Object>();
+    value.put("numericOrderId", id);
+    value.put("label", label);
+    value.put("scenarioId", current.id);
+    value.put("stepId", currentStep.get("id"));
+    value.put("checkId", checkId);
+    value.put("observedAt", Instant.now().toString());
+    value.put("source", "PostgreSQL");
+    value.put("snapshot", snapshot);
+    current.orderSnapshots.add(value);
+  }
+
+  synchronized void output(
+      ConsoleKafka.Record record,
+      String type,
+      String inputPosition,
+      Map<Integer, String> startCursors,
+      Map<Integer, String> endOffsets) {
+    String id = record.topic() + "/" + record.partition() + "/" + record.offset();
+    if (current.outputs.stream().anyMatch(existing -> id.equals(existing.get("id")))) return;
+    var value = new LinkedHashMap<String, Object>();
+    value.put("id", id);
+    value.put(
+        "source",
+        Map.of(
+            "topic", record.topic(), "partition", record.partition(), "offset", record.offset()));
+    value.put("key", record.key());
+    value.put("payload", record.payload());
+    value.put("type", type);
+    value.put("inputPosition", inputPosition);
+    value.put("scenarioId", current.id);
+    value.put("stepId", currentStep.get("id"));
+    value.put("observedAt", Instant.now().toString());
+    value.put("readSource", "Kafka read_committed");
+    value.put("startCursors", startCursors);
+    value.put("endOffsets", endOffsets);
+    current.outputs.add(value);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> copyEvidence(Map<String, Object> original) {
+    var copy = new LinkedHashMap<>(original);
+    Object observations = original.get("sqlObservations");
+    if (observations instanceof List<?> list)
+      copy.put(
+          "sqlObservations",
+          list.stream().map(value -> new LinkedHashMap<>((Map<String, Object>) value)).toList());
+    return copy;
   }
 
   synchronized void passed() {

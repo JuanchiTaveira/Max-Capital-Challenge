@@ -14,11 +14,16 @@
   <div class="refresh"><button id="refresh" type="button">Actualizar ahora</button><button id="pause" type="button" aria-pressed="false">Pausar refresco</button></div>
 </header>
 <p id="summary" class="summary">Consultando el entorno…</p>
-<nav role="tablist" aria-label="Vistas de evaluación">
-  <button id="tab-scenarios" role="tab" aria-controls="scenarios" aria-selected="true" data-view="scenarios">Escenarios</button>
-  <button id="tab-messages" role="tab" aria-controls="messages" aria-selected="false" data-view="messages" tabindex="-1">Mensajes</button>
-  <button id="tab-orders" role="tab" aria-controls="orders" aria-selected="false" data-view="orders" tabindex="-1">Órdenes</button>
-  <button id="tab-system" role="tab" aria-controls="system" aria-selected="false" data-view="system" tabindex="-1">Sistema</button>
+<nav aria-label="Navegación principal">
+  <button id="tab-scenarios" aria-current="page" data-view="scenarios">Escenarios</button>
+  <details id="advanced-tools" class="advanced-tools">
+    <summary>Herramientas avanzadas</summary>
+    <div class="advanced-links">
+      <button id="tab-messages" aria-current="false" data-view="messages">Mensajes</button>
+      <button id="tab-orders" aria-current="false" data-view="orders">Órdenes</button>
+      <button id="tab-system" aria-current="false" data-view="system">Sistema</button>
+    </div>
+  </details>
 </nav>
 <main id="content" tabindex="-1">
   <section id="scenarios" role="tabpanel" aria-labelledby="tab-scenarios">
@@ -40,10 +45,15 @@
         <div class="scenario-actions"><div class="actions"><label for="run-mode">Modo</label><select id="run-mode"><option value="automatic">Automático</option><option value="step">Paso a paso</option></select><button id="run-selected" class="primary" data-manual-mutation="true">Ejecutar escenario</button></div><p class="help">Automático recorre todos los pasos de esta prueba. Paso a paso espera tu confirmación antes de cada acción.</p></div>
         <section id="run-panel" aria-label="Resultado del escenario" hidden>
           <div id="scenario-outcome" class="scenario-outcome" role="status"></div>
-          <h4>Lo esperado frente a lo observado</h4><p class="help">Observaciones capturadas durante esta prueba. El estado actual de la orden puede consultarse por separado.</p>
+          <h4>Comprobaciones</h4><p class="help">El servidor compara cada resultado con lo esperado. Las observaciones se guardan por paso.</p>
           <div id="scenario-checks" class="table-wrap"></div>
-          <h4>Pasos de esta prueba</h4><ol id="run-steps"></ol>
-          <details id="scenario-evidence"><summary>Evidencia técnica</summary><p id="run-id" class="mono"></p><div id="run-orders" class="actions"></div><p class="help">Los enlaces consultan el estado actual. Los snapshots de esta ejecución se conservan en los datos capturados.</p><div id="run-messages" class="table-wrap"></div><details><summary>Ver datos capturados completos</summary><pre id="run-json"></pre></details></details>
+          <section class="evidence-section" aria-labelledby="messages-heading"><div class="evidence-heading"><div><h4 id="messages-heading">Mensajes enviados</h4><p class="help">Cada posición se relaciona con su observación SQL y la entrada de ledger.</p></div><p id="run-message-count" class="evidence-count"></p></div><div id="run-messages" class="table-wrap"></div>
+            <section id="run-message-detail" class="inline-detail" aria-labelledby="message-detail-heading" hidden><h5 id="message-detail-heading">Mensaje seleccionado</h5><div id="run-message-inspector"></div></section>
+          </section>
+          <section class="evidence-section" aria-labelledby="orders-heading"><div class="evidence-heading"><div><h4 id="orders-heading">Órdenes y ledger</h4><p class="help">Se muestra la observación capturada más reciente. Consultar el estado actual crea una lectura aparte.</p></div></div><div id="run-orders" class="order-snapshots"></div></section>
+          <section class="evidence-section" aria-labelledby="outputs-heading"><div class="evidence-heading"><div><h4 id="outputs-heading">Salidas e incidentes</h4><p class="help">Incluye settlements y avisos de rechazo leídos desde Kafka con su fuente.</p></div></div><div id="run-outputs"></div></section>
+          <details id="run-steps-disclosure" class="evidence-section"><summary>Pasos de la prueba</summary><ol id="run-steps"></ol></details>
+          <details id="scenario-evidence" class="evidence-section"><summary>Datos técnicos completos</summary><p id="run-id" class="mono"></p><pre id="run-json"></pre></details>
         </section>
         <button id="next-scenario" hidden>Ir al siguiente escenario</button>
       </article>

@@ -21,7 +21,7 @@ Esta tabla es la única fuente del estado de implementación.
 | F-06 | Cuarentena y recuperación ordenada | Implementado |
 | F-07 | Entrega reproducible y documentación | Implementado |
 | F-08 | Integración continua — opcional | Pendiente |
-| F-09 | Consola local de evaluación | Implementado |
+| F-09 | Consola local de evaluación ([evidencia de la ficha integrada](openspec/changes/scenario-evidence-workspace/verification.md)) | Implementado |
 
 ## Levantar el proyecto
 
@@ -47,12 +47,19 @@ contador de ER aplicados y ledger en orden de inserción.
 2. Empezar por **Dos órdenes en paralelo** y leer la explicación y el resultado esperado.
 3. Elegir **Automático** y pulsar **Ejecutar escenario**, o **Ejecutar todos** para recorrer los ocho. En **Paso a paso**, pulsar **Continuar paso** para avanzar.
 4. Verificar la conclusión y la tabla **Verificación / Esperado / Observado / Resultado**. Cada escenario debe terminar aprobado; un error o timeout indica que la verificación falló.
-5. Abrir **Evidencia técnica** para inspeccionar posiciones y órdenes. Las vistas **Mensajes**, **Órdenes** y **Sistema** permiten consultar Kafka, estado/ledger y salud de los consumidores.
+5. En la misma ficha, inspeccionar **Mensajes enviados**, seleccionar un mensaje y relacionarlo con su resultado SQL y fila de ledger. Las tarjetas de órdenes muestran cantidades, estado e historial de snapshots; **Salidas e incidentes** reúne settlements y recuperación. El payload y los detalles técnicos se pueden desplegar.
+6. Usar **Herramientas avanzadas** para publicar o republicar mensajes, consultar órdenes y diagnosticar el sistema. Al volver a **Escenarios** se conserva la ejecución seleccionada. Seleccionar un escenario abre su explicación; sólo **Ejecutar escenario** inicia el recorrido.
 
 Los ocho escenarios cubren órdenes intercaladas, snapshots, duplicados, persistencia,
 transacciones abortadas, settlement único, caídas entre commits/rebalanceos y
 cuarentena con corrección. Los ensayos de fallas restauran los servicios y conservan
 los datos. El historial de ejecuciones de la consola vive en memoria.
+
+El paquete `com.maxcapital.challenge.demo`, los recursos web de `resources/demo`
+y la instrumentación opcional `demo.recovery` son soporte auxiliar para esta UI,
+los escenarios y los ensayos de fallas. Contienen el ejecutor, consultas de evidencia
+y controles locales; las reglas de negocio del procesamiento de órdenes están en
+el núcleo de la aplicación.
 
 Para ejecutar la misma verificación por API, con el entorno levantado:
 

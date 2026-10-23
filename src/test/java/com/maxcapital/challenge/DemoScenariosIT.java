@@ -222,6 +222,90 @@ class DemoScenariosIT {
                                   .equals(message.path("scenarioId").asString())))
           .isTrue();
     }
+    for (var scenario : state.path("scenarioResults")) {
+      var scenarioMessages =
+          java.util.stream.StreamSupport.stream(state.path("messages").spliterator(), false)
+              .filter(
+                  message ->
+                      message
+                          .path("scenarioId")
+                          .asString()
+                          .equals(scenario.path("scenarioId").asString()))
+              .toList();
+      var evidence = scenario.path("evidence");
+      assertThat(evidence.path("messages").size()).isEqualTo(scenarioMessages.size());
+      assertThat(evidence.path("orderSnapshots").isArray()).isTrue();
+      assertThat(evidence.path("outputs").isArray()).isTrue();
+      for (var message : evidence.path("messages")) {
+        assertThat(message.path("source").path("topic").asString()).isEqualTo("execution-reports");
+        assertThat(message.path("source").path("partition").isString()).isTrue();
+        assertThat(message.path("source").path("offset").isString()).isTrue();
+        assertThat(message.path("stepId").asString()).isNotBlank();
+        assertThat(message.path("observedAt").asString()).isNotBlank();
+        assertThat(message.path("report").path("numericOrderId").isString()).isTrue();
+      }
+    }
+    var interleaved = state.path("scenarioResults").get(0).path("evidence");
+    assertThat(interleaved.path("messages").size()).isEqualTo(7);
+    assertThat(interleaved.path("orderSnapshots").size()).isEqualTo(2);
+    assertThat(interleaved.path("orderSnapshots").get(0).path("snapshot").path("ledger").size())
+        .isEqualTo(4);
+    assertThat(interleaved.path("orderSnapshots").get(1).path("snapshot").path("ledger").size())
+        .isEqualTo(3);
+    var quantities = state.path("scenarioResults").get(1).path("evidence");
+    assertThat(quantities.path("orderSnapshots").size()).isEqualTo(4);
+    assertThat(
+            quantities
+                .path("orderSnapshots")
+                .get(0)
+                .path("snapshot")
+                .path("accumulativeNominalAmount")
+                .asString())
+        .isEqualTo("0.00000000");
+    assertThat(
+            quantities
+                .path("orderSnapshots")
+                .get(1)
+                .path("snapshot")
+                .path("accumulativeNominalAmount")
+                .asString())
+        .isEqualTo("3.00000000");
+    assertThat(
+            quantities
+                .path("orderSnapshots")
+                .get(2)
+                .path("snapshot")
+                .path("accumulativeNominalAmount")
+                .asString())
+        .isEqualTo("7.00000000");
+    assertThat(
+            quantities
+                .path("orderSnapshots")
+                .get(3)
+                .path("snapshot")
+                .path("accumulativeNominalAmount")
+                .asString())
+        .isEqualTo("10.00000000");
+    var restart = state.path("scenarioResults").get(3).path("evidence");
+    assertThat(restart.path("orderSnapshots").size()).isEqualTo(4);
+    var duplicateEvidence = state.path("scenarioResults").get(2).path("evidence");
+    assertThat(duplicateEvidence.path("messages").size()).isEqualTo(4);
+    assertThat(duplicateEvidence.path("messages").get(0).path("sqlObservations").isEmpty())
+        .isFalse();
+    var duplicateOriginal =
+        duplicateEvidence.path("messages").get(0).path("sqlObservations").get(0).path("result");
+    var duplicateLate =
+        duplicateEvidence.path("messages").get(3).path("sqlObservations").get(0).path("result");
+    assertThat(duplicateOriginal.path("status").asString()).isEqualTo("NEW");
+    assertThat(duplicateLate.path("status").asString()).isEqualTo("FILLED");
+    assertThat(duplicateLate.path("ledgerId").asString())
+        .isEqualTo(duplicateOriginal.path("ledgerId").asString());
+    var transactionEvidence = state.path("scenarioResults").get(4).path("evidence");
+    assertThat(transactionEvidence.path("messages").size()).isEqualTo(3);
+    var aborted = transactionEvidence.path("messages").get(1);
+    assertThat(aborted.path("transaction").asString()).isEqualTo("ABORTED");
+    assertThat(aborted.path("sqlObservations").get(0).path("status").asString())
+        .isEqualTo("NO_RESULT");
     var duplicateScenario = state.path("scenarioResults").get(2);
     assertThat(
             check(duplicateScenario, "new")

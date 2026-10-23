@@ -53,6 +53,8 @@ public class QuarantineScenarios {
     long order = steps.fresh(run, 0), healthy = steps.fresh(run, 1);
     var own = new OwnCase(order, steps.report(run, order, 2, "PARTIALLY_FILLED", 4, 6));
     active.put(run.id, own);
+    String rejectionStart =
+        kafka.read("execution-reports-rejected", 0, "0", 1).get("endOffset").toString();
     var starts = new LinkedHashMap<Integer, String>();
     for (int p = 0; p < 2; p++)
       starts.put(p, kafka.read("settlements", p, "0", 1).get("endOffset").toString());
@@ -91,11 +93,26 @@ public class QuarantineScenarios {
                     require(
                         e.state().equals("OPEN") && e.notified(),
                         "Captura o aviso todavía pendientes");
+                    var rejection = readRejection(own.original, rejectionStart);
+                    String rejectionEnd =
+                        kafka
+                            .read("execution-reports-rejected", 0, rejectionStart, 1)
+                            .get("endOffset")
+                            .toString();
+                    run.output(
+                        rejection,
+                        "REJECTION",
+                        sourceId(own.original),
+                        Map.of(0, rejectionStart),
+                        Map.of(0, rejectionEnd));
                     return e;
                   });
-          require(
-              queries.result(successor.topic(), 0, successor.offset()).get("result") == null,
-              "FILLED adelantado");
+          var successorObservation = queries.result(successor.topic(), 0, successor.offset());
+          run.sqlObservation(
+              successor,
+              successorObservation.get("result") == null ? "NO_RESULT" : "RESULT_FOUND",
+              successorObservation);
+          require(successorObservation.get("result") == null, "FILLED adelantado");
           steps.expectOrder(run, "healthy", healthy, "FILLED", 10, 1, 2);
           var blocked = steps.expectOrder(run, "paused", order, "NEW", 0, 1);
           run.observe(
@@ -152,6 +169,27 @@ public class QuarantineScenarios {
                         rows.size() == 2
                             && rows.stream().map(ConsoleKafka.Record::key).distinct().count() == 2,
                         "Settlement ausente o repetido");
+                    var endOffsets = new LinkedHashMap<Integer, String>();
+                    for (int partition = 0; partition < 2; partition++)
+                      endOffsets.put(
+                          partition,
+                          kafka
+                              .read("settlements", partition, starts.get(partition), 1)
+                              .get("endOffset")
+                              .toString());
+                    for (var output : rows) {
+                      var source = ConsoleValues.JSON.readTree(output.payload()).path("source");
+                      run.output(
+                          output,
+                          "SETTLEMENT",
+                          source.path("topic").asString()
+                              + "/"
+                              + source.path("partition").asString()
+                              + "/"
+                              + source.path("offset").asString(),
+                          starts,
+                          endOffsets);
+                    }
                     return rows;
                   });
           require(
@@ -232,6 +270,45 @@ public class QuarantineScenarios {
   private static InputPosition source(ConsoleKafka.Record r) {
     return new InputPosition(
         r.topic(), Integer.parseInt(r.partition()), Long.parseLong(r.offset()));
+  }
+
+  @SuppressWarnings("unchecked")
+  private ConsoleKafka.Record readRejection(ConsoleKafka.Record original, String start) {
+    long end =
+        Long.parseLong(
+            kafka.read("execution-reports-rejected", 0, start, 1).get("endOffset").toString());
+    String cursor = start;
+    while (Long.parseLong(cursor) < end) {
+      var page = kafka.read("execution-reports-rejected", 0, cursor, 200);
+      var records = (List<ConsoleKafka.Record>) page.get("records");
+      for (var record : records) {
+        try {
+          var payload = ConsoleValues.JSON.readTree(record.payload());
+          var source = payload.path("source");
+          String rejectionId =
+              "rejection:"
+                  + original.topic()
+                  + ":"
+                  + original.partition()
+                  + ":"
+                  + original.offset();
+          if (payload.path("rejectionId").asString().equals(rejectionId)
+              && source.path("topic").asString().equals(original.topic())
+              && source.path("partition").asString().equals(original.partition())
+              && source.path("offset").asString().equals(original.offset())) return record;
+        } catch (RuntimeException ignored) {
+          // Un aviso con otra identidad no satisface la evidencia de este escenario.
+        }
+      }
+      String next = page.get("nextCursor").toString();
+      require(Long.parseLong(next) > Long.parseLong(cursor), "Lectura parcial de avisos DLQ");
+      cursor = next;
+    }
+    throw new IllegalStateException("El aviso DLQ notificado no se observó en read_committed");
+  }
+
+  private static String sourceId(ConsoleKafka.Record record) {
+    return record.topic() + "/" + record.partition() + "/" + record.offset();
   }
 
   private static void sleep() {

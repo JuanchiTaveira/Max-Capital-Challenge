@@ -103,7 +103,9 @@ public class RecoveryScenarios {
               await(
                   run,
                   "settlement único",
-                  () -> verifyOutput(starts, filled, cancelled, steps.result(run, records.get(4))));
+                  () ->
+                      verifyOutput(
+                          run, starts, filled, cancelled, steps.result(run, records.get(4))));
           run.observe(
               "settlement",
               "Un settlement confirmado por la orden completada y cero por la cancelada; las republicaciones no agregaron salidas.",
@@ -171,7 +173,12 @@ public class RecoveryScenarios {
                   "Barrera en otra posición");
               return value;
             });
-    var before = queries.result(target.topic(), partition, target.offset()).get("result");
+    var beforeObservation = queries.result(target.topic(), partition, target.offset());
+    var before = beforeObservation.get("result");
+    run.sqlObservation(
+        target,
+        beforeObservation.get("result") == null ? "NO_RESULT" : "RESULT_FOUND",
+        beforeObservation);
     var evidence = new LinkedHashMap<String, Object>();
     evidence.put("barrier", reached);
     evidence.put("target", target);
@@ -269,13 +276,14 @@ public class RecoveryScenarios {
         await(
             run,
             "una salida final tras resolver intentos",
-            () -> verifyOutput(starts, order, -1, completion));
+            () -> verifyOutput(run, starts, order, -1, completion));
     if (!check.equals("both-down"))
       docker.control(service, check.equals("rebalance") ? "restart" : "start");
     var ready = steps.ready(run, "ready");
-    require(
-        "1".equals(queries.order(Long.toString(successorOrder)).get("appliedExecutionCount")),
-        "Sucesor sin aplicar");
+    var successorState = queries.order(Long.toString(successorOrder));
+    run.orderSnapshot(
+        Long.toString(successorOrder), run.orderLabel(successorOrder), "successor", successorState);
+    require("1".equals(successorState.get("appliedExecutionCount")), "Sucesor sin aplicar");
     if (check.equals("both-down")) {
       for (int p = 0; p < 2; p++) {
         long cancelled = steps.fresh(run, p);
@@ -286,8 +294,11 @@ public class RecoveryScenarios {
         require(
             rows.stream().noneMatch(r -> r.key().equals(Long.toString(cancelled))),
             "CANCELLED produjo settlement");
+        var cancelledState = queries.order(Long.toString(cancelled));
+        run.orderSnapshot(
+            Long.toString(cancelled), run.orderLabel(cancelled), "cancelled", cancelledState);
         require(
-            "2".equals(queries.order(Long.toString(cancelled)).get("appliedExecutionCount")),
+            "2".equals(cancelledState.get("appliedExecutionCount")),
             "No continuó en ambas particiones");
       }
     }
@@ -364,7 +375,11 @@ public class RecoveryScenarios {
   }
 
   private Map<String, Object> verifyOutput(
-      Map<Integer, String> starts, long filled, long cancelled, Map<String, Object> result) {
+      DemoRun run,
+      Map<Integer, String> starts,
+      long filled,
+      long cancelled,
+      Map<String, Object> result) {
     var rows = outputs(starts);
     var matches = rows.stream().filter(r -> r.key().equals(Long.toString(filled))).toList();
     require(matches.size() == 1, "Esperado un settlement; observados " + matches.size());
@@ -372,6 +387,26 @@ public class RecoveryScenarios {
         rows.stream().noneMatch(r -> r.key().equals(Long.toString(cancelled))),
         "Settlement de CANCELLED");
     var value = ConsoleValues.JSON.readTree(matches.getFirst().payload());
+    var sourcePosition = value.path("source");
+    var endOffsets = new LinkedHashMap<Integer, String>();
+    for (int partition = 0; partition < 2; partition++)
+      endOffsets.put(
+          partition,
+          kafka
+              .read("settlements", partition, starts.get(partition), 1)
+              .get("endOffset")
+              .toString());
+    for (var match : matches)
+      run.output(
+          match,
+          "SETTLEMENT",
+          sourcePosition.path("topic").asString()
+              + "/"
+              + sourcePosition.path("partition").asString()
+              + "/"
+              + sourcePosition.path("offset").asString(),
+          starts,
+          endOffsets);
     require(
         value.path("schemaVersion").asInt() == 1
             && value.path("settlementId").asString().equals("settlement:" + filled),

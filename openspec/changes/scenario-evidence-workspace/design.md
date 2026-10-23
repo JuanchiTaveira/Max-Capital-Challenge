@@ -75,11 +75,13 @@ checks/referencias estructurados ya existentes, con renderers explícitos por su
 IDs estables. No recorrer recursivamente JSON arbitrario ni interpretar títulos
 para decidir qué es un resultado, un snapshot o una falla.
 
-La observación SQL de un mensaje diferencia lectura no realizada, lectura exitosa
-sin fila, resultado existente y consulta fallida. No usa un único null para los
-cuatro hechos. Un resultado conserva su snapshot, no el estado del ER ni la orden
-actual. El resumen del ER expone `fixId`, estado y cantidades como datos separados;
-JSON inválido conserva el original y deja esos campos sin dato.
+`sqlObservations` conserva una lista de lecturas por mensaje para que una consulta
+posterior no sobrescriba una observación anterior; `sqlObservationStatus` expone el
+estado más reciente. Los estados son `NOT_QUERIED`, `NO_RESULT`, `RESULT_FOUND` y
+`QUERY_FAILED`. No se usa un único null para esos hechos.
+Un resultado conserva su snapshot, no el estado del ER ni la orden actual. El
+resumen del ER expone `fixId`, estado y cantidades como datos separados; JSON
+inválido conserva el original y deja esos campos sin dato.
 
 Alternativa descartada: un agregado nuevo que consulte dependencias cada vez que
 se pide un run. Hace que evidencia histórica cambie o desaparezca durante fallas

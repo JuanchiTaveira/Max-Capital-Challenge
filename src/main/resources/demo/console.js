@@ -6,6 +6,7 @@ const state = {
   messageCursor: '0', messageNext: null, messageEnd: '0', records: [], selected: null,
   orderCursor: null, orderNext: null, orderId: null, order: null, highlight: null,
   scenarioId: 'interleaved-orders', explicitScenario: false,
+  evidenceSelection: null, snapshotSelection: {}, currentOrderReads: {},
 };
 const labels = { RUNNING: 'En ejecución', WAITING: 'Esperando continuación', PASSED: 'Aprobado', FAILED: 'Falló', CANCELLED: 'Cancelado', PENDING: 'Pendiente' };
 const signatures = new Map();
@@ -58,9 +59,14 @@ function table(headers, rows) {
 }
 function replaceStable(id, signature, content) {
   if (signatures.get(id) === signature) return;
+  const openDetails = new Map([...$(id).querySelectorAll('details')].map((item, index) => [item.dataset.preserveKey || `index:${index}`, item.open]));
   const focused = $(id).contains(document.activeElement) ? document.activeElement : null;
   const identity = focused ? { id: focused.id, label: focused.getAttribute('aria-label'), text: focused.textContent } : null;
   signatures.set(id, signature); $(id).replaceChildren(content);
+  [...$(id).querySelectorAll('details')].forEach((item, index) => {
+    const key = item.dataset.preserveKey || `index:${index}`;
+    if (openDetails.has(key)) item.open = openDetails.get(key);
+  });
   if (identity) {
     const replacement = [...$(id).querySelectorAll('button,input,select,a,summary')].find(item =>
       (identity.id && item.id === identity.id) || (identity.label && item.getAttribute('aria-label') === identity.label) || (!identity.id && !identity.label && item.textContent === identity.text));
@@ -71,9 +77,10 @@ function show(view, updateHash = true) {
   if (!views.includes(view)) view = 'scenarios';
   const changed = state.view !== view; state.view = view;
   for (const name of views) {
-    $(name).hidden = name !== view; $('tab-' + name).setAttribute('aria-selected', String(name === view));
-    $('tab-' + name).tabIndex = name === view ? 0 : -1;
+    $(name).hidden = name !== view;
+    $('tab-' + name).setAttribute('aria-current', String(name === view));
   }
+  $('advanced-tools').open = view !== 'scenarios';
   if (updateHash) history.replaceState(null, '', view === 'scenarios' ? scenarioHash() : '#' + view);
   if (changed) window.scrollTo({ top: 0, behavior: 'instant' });
   refresh(true);
@@ -117,12 +124,14 @@ const scenarioLabels = { ...labels, PENDING: 'Sin iniciar', NOT_RUN: 'No ejecuta
 function scenarioHash() { return '#scenarios/' + (state.runId || '') + '/' + state.scenarioId; }
 function selectScenario(id) {
   state.scenarioId = id; state.explicitScenario = true;
+  state.evidenceSelection = null; state.snapshotSelection = {}; state.currentOrderReads = {};
   history.replaceState(null, '', scenarioHash()); renderGuided();
 }
 function scenarioTitle(id) { return state.catalog?.find(entry => entry.id === id)?.title || 'Escenario'; }
 function startRun(scenario) {
   mutate('/runs', { scenario, mode: $('run-mode').value }, 'scenario-notice', result => {
     state.runId = result.id; state.active = result.id; state.run = result;
+    state.evidenceSelection = null; state.snapshotSelection = {}; state.currentOrderReads = {};
     state.scenarioId = result.scenarioIds[0]; state.explicitScenario = true;
     show('scenarios'); renderRun(result);
     notice('scenario-notice', 'La prueba continúa en el servidor. Las observaciones se completan a medida que avanza.');
@@ -200,9 +209,261 @@ function renderGuided() {
   if (selected) renderScenarioResult(selected);
   disableMutations();
 }
+const sqlLabels = {
+  NOT_QUERIED: 'Sin consulta SQL', NO_RESULT: 'Sin resultado registrado',
+  RESULT_FOUND: 'Resultado SQL observado', QUERY_FAILED: 'Falló la consulta SQL',
+};
+function displayQuantity(value) {
+  const text = String(value ?? '—');
+  if (!/^[-]?\d+(\.\d+)?$/.test(text)) return text;
+  return text.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '');
+}
+function decimalDifference(total, executed) {
+  const left = String(total), right = String(executed);
+  const scale = Math.max(left.split('.')[1]?.length || 0, right.split('.')[1]?.length || 0);
+  const units = value => {
+    const [whole, fraction = ''] = value.split('.');
+    return BigInt(whole + fraction.padEnd(scale, '0'));
+  };
+  const difference = units(left) - units(right);
+  const negative = difference < 0n;
+  const digits = (negative ? -difference : difference).toString().padStart(scale + 1, '0');
+  const formatted = scale ? `${digits.slice(0, -scale)}.${digits.slice(-scale)}` : digits;
+  return displayQuantity((negative ? '-' : '') + formatted);
+}
+function latestSql(message) {
+  return message.sqlObservations?.at(-1) || null;
+}
+function messageRow(message) {
+  const report = message.report || {};
+  const observation = latestSql(message);
+  const sqlResult = observation?.result;
+  const id = message.id;
+  const selected = state.evidenceSelection?.messageId === id;
+  const status = message.transaction === 'ABORTED' ? 'Envío abortado' : (sqlResult?.outcome || sqlLabels[message.sqlObservationStatus] || 'Sin observación');
+  const choose = button(selected ? 'Seleccionado' : 'Ver mensaje', () => {
+    const ledgerId = sqlResult?.ledgerId || null;
+    state.evidenceSelection = { messageId: id, orderId: report.numericOrderId || message.key, ledgerId };
+    renderScenarioResult(state.run.scenarioResults.find(item => item.scenarioId === state.scenarioId));
+  });
+  choose.setAttribute('aria-label', `Inspeccionar ${id}`);
+  choose.setAttribute('aria-pressed', String(selected));
+  return [report.numericOrderId || message.key || '—', report.fixId || '—', report.status || 'ER inválido', `${message.source.partition} / ${message.source.offset}`, status, sqlResult?.ledgerId || '—', choose];
+}
+function quantitySummary(snapshot) {
+  const list = element('dl', '', 'quantity-summary');
+  for (const [term, value] of [
+    ['Solicitada', snapshot.nominalAmounts],
+    ['Ejecutada', snapshot.accumulativeNominalAmount],
+    ['Pendiente de ejecutar', snapshot.leavesNominalAmount],
+  ]) {
+    list.append(element('dt', term), element('dd', displayQuantity(value)));
+  }
+  return list;
+}
+function renderOrderCards(result) {
+  const evidence = result.evidence || {};
+  const snapshots = evidence.orderSnapshots || [];
+  const cards = element('div', '', 'order-snapshots');
+  for (const order of result.orders) {
+    const history = snapshots.filter(item => item.numericOrderId === order.numericOrderId);
+    const card = element('article', '', 'order-card');
+    const heading = element('div', '', 'order-card-heading');
+    heading.append(element('h5', `${order.label} · ${order.numericOrderId}`));
+    const selectedId = state.snapshotSelection[order.numericOrderId] || history.at(-1)?.observedAt;
+    let captured = history.find(item => item.observedAt === selectedId) || history.at(-1);
+    const snapshot = captured?.snapshot;
+    if (snapshot) {
+      heading.append(element('span', snapshot.status, `status-pill ${snapshot.status === 'FILLED' ? 'passed' : snapshot.status === 'CANCELLED' ? 'cancelled' : ''}`));
+      card.append(heading);
+      card.append(element('p', `${captured.checkId} · Capturado ${time(captured.observedAt)} · PostgreSQL`, 'help'));
+      card.append(quantitySummary(snapshot));
+      const count = element('p', `ER aplicados: ${snapshot.appliedExecutionCount} · Entradas de ledger: ${snapshot.ledger.length}`, 'order-counts');
+      card.append(count);
+      if (snapshot.status === 'CANCELLED') {
+        card.append(element('p', `Cancelada con ${displayQuantity(decimalDifference(snapshot.nominalAmounts, snapshot.accumulativeNominalAmount))} unidades sin ejecutar.`, 'cancelled-explanation'));
+      }
+      const versions = history.length > 1 ? element('details', '', 'snapshot-history') : null;
+      if (versions) {
+        versions.dataset.preserveKey = `snapshots:${order.numericOrderId}`;
+        versions.append(element('summary', `Ver otras observaciones (${history.length})`));
+        for (const version of history) {
+          const label = `${version.checkId}: ${version.snapshot.status}, ejecutada ${displayQuantity(version.snapshot.accumulativeNominalAmount)} · ${time(version.observedAt)}`;
+          const select = button(label, () => {
+            state.snapshotSelection[order.numericOrderId] = version.observedAt;
+            renderScenarioResult(state.run.scenarioResults.find(item => item.scenarioId === state.scenarioId));
+          }, 'snapshot-choice');
+          select.setAttribute('aria-pressed', String(version.observedAt === captured.observedAt));
+          versions.append(select);
+        }
+        card.append(versions);
+      }
+      const current = state.currentOrderReads[order.numericOrderId];
+      card.append(button('Consultar estado actual', () => readCurrentOrder(order.numericOrderId), 'secondary-action'));
+      if (current) {
+        const currentSection = element('section', '', 'current-order-state');
+        currentSection.append(element('h6', 'Estado actual, consultado por separado'));
+        currentSection.append(element('p', `${current.status} · PostgreSQL · ${time(current.observedAt)}`, 'help'));
+        currentSection.append(quantitySummary(current));
+        card.append(currentSection);
+      }
+      const selectedLedger = state.evidenceSelection?.orderId === order.numericOrderId ? state.evidenceSelection.ledgerId : null;
+      const ledger = snapshot.ledger || [];
+      if (ledger.length) {
+        card.append(element('h6', 'Ledger de esta observación'));
+        const rows = ledger.map(entry => {
+          const select = button(selectedLedger === entry.ledgerId ? 'Seleccionado' : entry.ledgerId, () => {
+            const related = (evidence.messages || []).find(message => message.sqlObservations?.some(observation => observation.result?.ledgerId === entry.ledgerId));
+            state.evidenceSelection = { messageId: related?.id || null, orderId: order.numericOrderId, ledgerId: entry.ledgerId };
+            renderScenarioResult(state.run.scenarioResults.find(item => item.scenarioId === state.scenarioId));
+          }, 'link mono');
+          select.setAttribute('aria-label', `Seleccionar ledger ${entry.ledgerId} de ${order.numericOrderId}`);
+          select.setAttribute('aria-pressed', String(selectedLedger === entry.ledgerId));
+          const detail = element('details'); detail.dataset.preserveKey = `ledger:${order.numericOrderId}:${entry.ledgerId}`;
+          detail.append(element('summary', 'Ver ER original'));
+          detail.append(element('pre', entry.payload));
+          return [select, entry.fixId || '—', entry.status || '—', displayQuantity(entry.accumulativeNominalAmount), detail];
+        });
+        const ledgerTable = element('div', '', 'table-wrap');
+        ledgerTable.append(table(['ledgerId', 'fixId', 'Estado del ER', 'Acumulado informado', 'Detalle'], rows));
+        card.append(ledgerTable);
+      }
+    } else {
+      card.append(heading, element('p', 'Todavía no hay un snapshot de esta orden.', 'help'));
+    }
+    cards.append(card);
+  }
+  return cards;
+}
+async function readCurrentOrder(id) {
+  const runId = state.runId, scenarioId = state.scenarioId;
+  try {
+    const current = await api('/orders/' + encodeURIComponent(id));
+    if (runId !== state.runId || scenarioId !== state.scenarioId) return;
+    state.currentOrderReads[id] = current;
+    renderScenarioResult(state.run.scenarioResults.find(item => item.scenarioId === scenarioId));
+  } catch (error) {
+    if (runId === state.runId && scenarioId === state.scenarioId) notice('scenario-notice', `No se pudo consultar el estado actual: ${error.message}. Las observaciones capturadas siguen disponibles.`, true);
+  }
+}
+function renderMessageInspector(message) {
+  const panel = $('run-message-detail');
+  panel.hidden = !message;
+  if (!message) return;
+  const report = message.report || {}, observation = latestSql(message), sqlResult = observation?.result;
+  const content = element('div', '', 'message-inspector-grid');
+  const facts = table(['Dato', 'Valor'], [
+    ['Posición de entrada', `${message.source.topic} / ${message.source.partition} / ${message.source.offset}`],
+    ['Paso', message.stepId], ['Envío del productor', message.transaction === 'ABORTED' ? 'Abortado por el productor' : message.transaction === 'COMMITTED' ? 'Confirmado en transacción' : 'Confirmado por Kafka'],
+    ['Estado informado por el ER', report.status || 'No disponible'],
+    ['Resultado SQL de la posición', sqlLabels[message.sqlObservationStatus] || 'Sin observación'],
+    ['Resultado de procesamiento SQL', sqlResult?.outcome || 'Sin resultado'],
+    ['Snapshot histórico', sqlResult?.status || 'Sin resultado registrado'],
+    ['Estado actual de la orden', state.currentOrderReads[report.numericOrderId]?.status || 'No consultado'],
+    ['ledgerId relacionado', sqlResult?.ledgerId || 'Sin referencia'],
+    ['Observado en', time(observation?.observedAt || message.observedAt)],
+  ]);
+  content.append(facts);
+  if (message.transaction === 'ABORTED') content.append(element('p', 'El productor abortó esta transacción. No es un registro visible read_committed y no se cuenta como ER aplicado.', 'notice'));
+  const details = element('details'); details.dataset.preserveKey = `message-payload:${message.id}`; details.append(element('summary', 'Ver payload original del ER'), element('pre', message.payload ?? '(payload nulo)'));
+  content.append(details);
+  if (observation?.result) {
+    const resultDetails = element('details'); resultDetails.dataset.preserveKey = `sql-result:${message.id}`; resultDetails.append(element('summary', 'Ver snapshot SQL completo'), element('pre', JSON.stringify(observation.result, null, 2)));
+    content.append(resultDetails);
+  }
+  replaceStable('run-message-inspector', JSON.stringify([message.id, message.sqlObservations]), content);
+}
+function renderOutputs(result) {
+  const outputs = result.evidence?.outputs || [];
+  const root = element('div');
+  if (!outputs.length) root.append(element('p', result.status === 'RUNNING' ? 'Las salidas se mostrarán cuando el escenario las observe.' : 'Este escenario no registró salidas observadas.', 'help'));
+  else {
+    const rows = outputs.map(item => {
+      const payload = element('details'); payload.append(element('summary', 'Ver mensaje completo'), element('pre', item.payload));
+      payload.dataset.preserveKey = `output:${item.id}`;
+      const start = item.startCursors?.[item.source.partition] ?? '—';
+      const end = item.endOffsets?.[item.source.partition] ?? '—';
+      return [item.type === 'REJECTION' ? 'Aviso de rechazo DLQ' : 'Settlement', `${item.source.topic} / ${item.source.partition} / ${item.source.offset}`, item.inputPosition || '—', `${item.readSource}: ${start}–${end}; ${time(item.observedAt)}`, payload];
+    });
+    root.append(table(['Tipo de salida', 'Posición propia', 'Posición de entrada', 'Lectura', 'Detalle'], rows));
+  }
+  const checkKeysByScenario = {
+    'quantity-snapshots': { clock: ['orderId', 'transactionTimes', 'amounts'] },
+    'restart-persistence': { preserved: ['before', 'after'] },
+    'terminal-duplicates': { history: ['original', 'lateDuplicate'] },
+    'committed-input-only': { visibility: ['visibleOffsets', 'messages'], 'no-result': ['position', 'successor'] },
+    'settlement-once': { settlement: ['messages', 'result', 'startCursors', 'visibility'], recovery: ['barrier', 'target', 'sqlBefore', 'result', 'successor', 'output', 'order', 'recoveredGroup'] },
+    'commit-boundary-recovery': {
+      'sql-open': ['barrier', 'target', 'sqlBefore', 'takeover', 'obsoleteAttempt', 'result', 'successor', 'output', 'order', 'recoveredGroup'],
+      'sql-committed': ['barrier', 'target', 'sqlBefore', 'takeover', 'obsoleteAttempt', 'result', 'successor', 'output', 'order', 'recoveredGroup'],
+      'send-ack': ['barrier', 'target', 'sqlBefore', 'kill', 'takeover', 'result', 'successor', 'output', 'order', 'recoveredGroup'],
+      rebalance: ['barrier', 'target', 'sqlBefore', 'takeover', 'obsoleteAttempt', 'result', 'successor', 'output', 'order', 'recoveredGroup'],
+      'both-down': ['barrier', 'target', 'sqlBefore', 'kill', 'killOther', 'result', 'successor', 'output', 'order', 'recoveredGroup'],
+      restored: ['group', 'instances'],
+    },
+    'poison-recovery': {
+      paused: ['original', 'quarantineState', 'dlqNotified', 'order'],
+      recovered: ['order', 'correction', 'original'],
+      outputs: ['settlements', 'source'],
+      restored: ['group', 'instances'],
+    },
+  };
+  const referenceLabels = {
+    barrier: 'Barrera de recuperación', target: 'ER de entrada', sqlBefore: 'Resultado SQL antes de recuperar',
+    takeover: 'Toma de partición', obsoleteAttempt: 'Intento anterior rechazado', result: 'Resultado SQL recuperado',
+    successor: 'Mensaje sucesor', output: 'Salida verificada', order: 'Snapshot de la orden',
+    recoveredGroup: 'Grupo de consumidores recuperado', original: 'ER original', correction: 'Auditoría de corrección',
+    quarantineState: 'Estado de cuarentena', dlqNotified: 'Marcador de aviso en PostgreSQL',
+    settlements: 'Settlements observados', source: 'Fuente de la salida', group: 'Grupo Kafka', instances: 'Instancias',
+    before: 'Capturas anteriores al reinicio', after: 'Capturas posteriores al reinicio',
+    transactionTimes: 'Horas de origen', amounts: 'Acumulados observados', visibleOffsets: 'Offsets visibles read_committed',
+    position: 'Posición sin resultado', messages: 'Mensajes relacionados', lateDuplicate: 'NEW republicado',
+  };
+  const checkKeys = checkKeysByScenario[result.scenarioId] || {};
+  const evidenceChecks = result.checks.filter(check => checkKeys[check.id] && check.references);
+  if (evidenceChecks.length) {
+    root.append(element('h5', 'Incidentes y recuperación observados'));
+    for (const check of evidenceChecks) {
+      const detail = element('details'); detail.dataset.checkId = check.id;
+      detail.dataset.preserveKey = `check:${check.id}`;
+      detail.append(element('summary', `${check.label}: ${checkLabels[check.status] || check.status}`));
+      detail.append(element('p', check.observed || 'Sin observación completa.', 'help'));
+      const rows = checkKeys[check.id]
+        .filter(key => Object.hasOwn(check.references, key))
+        .map(key => {
+          const value = check.references[key];
+          if (value && typeof value === 'object') {
+            const structured = element('div');
+            if (!Array.isArray(value)) {
+              const fields = Object.entries(value).filter(([field, item]) => item != null && typeof item !== 'object' && !['payload', 'effectiveReport'].includes(field));
+              if (fields.length) structured.append(table(['Campo', 'Valor'], fields));
+              if (value.source?.topic) structured.append(element('p', `Posición original: ${value.source.topic} / ${value.source.partition} / ${value.source.offset}`));
+              for (const field of ['payload', 'effectiveReport']) {
+                if (typeof value[field] === 'string') {
+                  const payload = element('details');
+                  payload.append(element('summary', field === 'payload' ? 'Payload original' : 'ER efectivo de la corrección'), element('pre', value[field]));
+                  structured.append(payload);
+                }
+              }
+            }
+            const raw = element('details'); raw.dataset.preserveKey = `reference:${check.id}:${key}`;
+            raw.append(element('summary', 'Abrir dato completo'), element('pre', JSON.stringify(value, null, 2)));
+            structured.append(raw);
+            return [referenceLabels[key] || key, structured];
+          }
+          return [referenceLabels[key] || key, String(value)];
+        });
+      detail.append(table(['Dato observado', 'Valor'], rows));
+      root.append(detail);
+    }
+  }
+  replaceStable('run-outputs', JSON.stringify([outputs, evidenceChecks]), root);
+}
 function renderScenarioResult(result) {
+  if (!result || !state.run) return;
   const steps = state.run.steps.filter(step => step.scenarioId === result.scenarioId);
-  const messages = state.run.messages.filter(message => message.scenarioId === result.scenarioId);
+  const evidence = result.evidence || { messages: [], orderSnapshots: [], outputs: [] };
+  const messages = evidence.messages || [];
   $('scenario-outcome').className = 'scenario-outcome ' + (result.status === 'PASSED' ? 'passed' : result.status === 'FAILED' ? 'failed' : '');
   const outcome = element('div'); outcome.append(element('h4', 'Resultado: ' + scenarioLabels[result.status]), element('p', result.conclusion));
   replaceStable('scenario-outcome', JSON.stringify([result.status, result.conclusion]), outcome);
@@ -210,11 +471,22 @@ function renderScenarioResult(result) {
     const observed = element('div'); observed.append(element('p', check.observed ?? 'Todavía no hay una observación para esta comprobación.'));
     if (check.diagnostic && check.status !== 'PASSED') observed.append(element('p', 'Diagnóstico: ' + check.diagnostic, 'error'));
     if (check.observedAt) observed.append(element('small', time(check.observedAt), 'help'));
+    const references = check.references && Object.keys(check.references).length ? element('details') : null;
+    if (references) { references.append(element('summary', 'Datos estructurados de esta comprobación'), element('pre', JSON.stringify(check.references, null, 2))); observed.append(references); }
     return [check.label, check.expected, observed, element('span', checkLabels[check.status], 'check-status ' + (check.status === 'PASSED' ? 'passed' : check.status === 'FAILED' ? 'failed' : ''))];
   });
   replaceStable('scenario-checks', JSON.stringify(result.checks), table(['Verificación', 'Esperado', 'Observado', 'Resultado'], rows));
+  $('run-message-count').textContent = `${messages.length} envíos capturados`;
+  const messageTable = messages.length ? table(
+    ['Orden', 'fixId', 'Estado del ER', 'Partición / offset', 'Resultado SQL', 'ledgerId', 'Acción'],
+    messages.map(messageRow)) : element('p', result.status === 'RUNNING' ? 'Todavía no se enviaron mensajes.' : 'Esta ejecución terminó sin mensajes capturados.', 'help');
+  replaceStable('run-messages', JSON.stringify([messages, result.status, state.evidenceSelection?.messageId]), messageTable);
+  const selectedMessage = messages.find(message => message.id === state.evidenceSelection?.messageId);
+  renderMessageInspector(selectedMessage);
+  replaceStable('run-orders', JSON.stringify([evidence.orderSnapshots, state.snapshotSelection, state.evidenceSelection, state.currentOrderReads]), renderOrderCards(result));
+  renderOutputs(result);
+  const open = new Set([...$('run-steps').querySelectorAll('details[open]')].map(item => item.dataset.stepId));
   const stepList = document.createDocumentFragment();
-  const open = new Set([...$('run-steps').querySelectorAll('details[open]')].filter(item => item.dataset.status === 'PASSED').map(item => item.dataset.stepId));
   for (const step of steps) {
     const li = element('li'), details = element('details'); details.dataset.stepId = step.id; details.dataset.status = step.status;
     details.open = open.has(step.id) || ['RUNNING', 'PENDING', 'FAILED'].includes(step.status);
@@ -226,10 +498,6 @@ function renderScenarioResult(result) {
   }
   replaceStable('run-steps', JSON.stringify([result.scenarioId, steps]), stepList);
   $('run-id').textContent = 'Ejecución: ' + state.run.id;
-  const links = element('div', '', 'actions');
-  for (const order of result.orders) links.append(button('Ver ' + order.label + ' · ' + order.numericOrderId, () => viewOrder(order.numericOrderId), 'link mono'));
-  replaceStable('run-orders', JSON.stringify(result.orders), links);
-  replaceStable('run-messages', JSON.stringify(messages), recordTable(messages));
   $('run-json').textContent = JSON.stringify({ scenario: result, steps, messages }, null, 2);
 }
 async function refreshRun() {
@@ -384,12 +652,6 @@ function example(status) {
 }
 
 document.querySelectorAll('[data-view]').forEach(item => item.addEventListener('click', () => show(item.dataset.view)));
-document.querySelector('nav').addEventListener('keydown', event => {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-  event.preventDefault(); const index = views.indexOf(state.view);
-  const next = event.key === 'Home' ? 0 : event.key === 'End' ? 3 : (index + (event.key === 'ArrowRight' ? 1 : 3)) % 4;
-  show(views[next]); $('tab-' + views[next]).focus();
-});
 $('refresh').addEventListener('click', () => refresh(true));
 $('pause').addEventListener('click', () => { state.paused = !state.paused; $('pause').textContent = state.paused ? 'Reanudar refresco' : 'Pausar refresco'; $('pause').setAttribute('aria-pressed', String(state.paused)); if (!state.paused) refresh(true); });
 $('run-all').addEventListener('click', () => startRun('available'));
@@ -425,11 +687,18 @@ function readHash() {
   if (view === 'content') return;
   if ((!view || view === 'scenarios') && !id) {
     state.runId = null; state.run = null; state.runReadFailed = false;
+    state.evidenceSelection = null; state.snapshotSelection = {}; state.currentOrderReads = {};
     $('run-overview').hidden = true; notice('scenario-notice', '');
   }
   if (view === 'scenarios') {
-    if (id && state.runId !== id) { state.runId = id; state.run = null; $('run-overview').hidden = true; }
-    if (scenario) { state.scenarioId = scenario; state.explicitScenario = true; }
+    if (id && state.runId !== id) {
+      state.runId = id; state.run = null; state.evidenceSelection = null; state.snapshotSelection = {}; state.currentOrderReads = {};
+      $('run-overview').hidden = true;
+    }
+    if (scenario) {
+      if (state.scenarioId !== scenario) { state.evidenceSelection = null; state.snapshotSelection = {}; state.currentOrderReads = {}; }
+      state.scenarioId = scenario; state.explicitScenario = true;
+    }
     else state.explicitScenario = false;
     renderGuided();
   }

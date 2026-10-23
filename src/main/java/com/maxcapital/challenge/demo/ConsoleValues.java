@@ -59,9 +59,7 @@ public final class ConsoleValues {
     value.put(
         "ledger",
         details.ledger().stream()
-            .map(
-                entry ->
-                    Map.of("ledgerId", Long.toString(entry.ledgerId()), "payload", entry.report()))
+            .map(entry -> ledgerEntry(Long.toString(entry.ledgerId()), entry.report()))
             .toList());
     return value;
   }
@@ -81,14 +79,34 @@ public final class ConsoleValues {
     }
     var ledger = new java.util.ArrayList<Map<String, String>>();
     for (var entry : node.path("ledger")) {
-      ledger.add(
-          Map.of(
-              "ledgerId",
-              entry.path("ledgerId").asString(),
-              "payload",
-              entry.path("report").toString()));
+      ledger.add(ledgerEntry(entry.path("ledgerId").asString(), entry.path("report").toString()));
     }
     result.put("ledger", ledger);
+    return result;
+  }
+
+  private static Map<String, String> ledgerEntry(String id, String payload) {
+    var result = new LinkedHashMap<String, String>();
+    result.put("ledgerId", id);
+    result.put("payload", payload);
+    try {
+      var report = JSON.readTree(payload);
+      for (String field :
+          new String[] {
+            "fixId",
+            "numericOrderId",
+            "status",
+            "nominalAmounts",
+            "accumulativeNominalAmount",
+            "leavesNominalAmount"
+          }) {
+        var value = report.get(field);
+        if (value != null && !value.isNull())
+          result.put(field, value.isValueNode() ? value.asString() : value.toString());
+      }
+    } catch (RuntimeException ignored) {
+      // The original JSON remains available even if it cannot be summarized.
+    }
     return result;
   }
 

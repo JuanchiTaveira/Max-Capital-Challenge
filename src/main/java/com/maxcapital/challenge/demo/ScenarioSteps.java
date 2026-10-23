@@ -425,13 +425,14 @@ public class ScenarioSteps {
               visibility,
               Map.of("visibleOffsets", List.copyOf(visible), "messages", List.copyOf(records)));
           require(visibility, "Visibilidad transaccional incorrecta");
-          var abortedResult =
-              queries
-                  .result(
-                      "execution-reports",
-                      Integer.parseInt(last.partition()),
-                      records.get(1).offset())
-                  .get("result");
+          var abortedObservation =
+              queries.result(
+                  "execution-reports", Integer.parseInt(last.partition()), records.get(1).offset());
+          var abortedResult = abortedObservation.get("result");
+          run.sqlObservation(
+              records.get(1),
+              abortedResult == null ? "NO_RESULT" : "RESULT_FOUND",
+              abortedObservation);
           run.observe(
               "no-result",
               abortedResult == null
@@ -514,6 +515,17 @@ public class ScenarioSteps {
           }
           return group;
         });
+    for (var record : records) {
+      if (run.hasSqlObservation(record)) continue;
+      try {
+        var observation =
+            queries.result(record.topic(), Integer.parseInt(record.partition()), record.offset());
+        run.sqlObservation(
+            record, observation.get("result") == null ? "NO_RESULT" : "RESULT_FOUND", observation);
+      } catch (RuntimeException ex) {
+        run.sqlObservation(record, "QUERY_FAILED", Map.of());
+      }
+    }
   }
 
   @SuppressWarnings("unchecked")
@@ -522,10 +534,17 @@ public class ScenarioSteps {
         run,
         "resultado SQL de " + record.partition() + "/" + record.offset(),
         () -> {
-          var value =
-              queries
-                  .result(record.topic(), Integer.parseInt(record.partition()), record.offset())
-                  .get("result");
+          Map<String, Object> observation;
+          try {
+            observation =
+                queries.result(
+                    record.topic(), Integer.parseInt(record.partition()), record.offset());
+          } catch (RuntimeException ex) {
+            run.sqlObservation(record, "QUERY_FAILED", Map.of());
+            throw ex;
+          }
+          var value = observation.get("result");
+          run.sqlObservation(record, value == null ? "NO_RESULT" : "RESULT_FOUND", observation);
           require(value != null, "Sin resultado registrado: " + record.offset());
           return (Map<String, Object>) value;
         });
@@ -579,6 +598,7 @@ public class ScenarioSteps {
       DemoRun run, String checkId, long order, String status, int accumulated, int... fixes) {
     String id = Long.toString(order);
     var actual = queries.order(id);
+    run.orderSnapshot(id, run.orderLabel(order), checkId, actual);
     try {
       require(
           status.equals(actual.get("status")),
